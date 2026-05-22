@@ -1,0 +1,1 @@
+"""External intelligence client hooks."""
