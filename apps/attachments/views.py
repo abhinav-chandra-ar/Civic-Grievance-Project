@@ -18,6 +18,7 @@ class AttachmentViewSet(
 ):
     """Attachment registration, reads, and validation metadata updates."""
 
+    filterset_fields = ["grievance", "is_active"]
     search_fields = ("attachment_code", "original_filename", "content_hash", "storage_reference")
     ordering_fields = ("uploaded_at", "updated_at", "content_type", "file_size_bytes")
 

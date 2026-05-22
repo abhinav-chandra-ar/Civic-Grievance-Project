@@ -19,6 +19,7 @@ class WorkflowEventViewSet(
 ):
     """Workflow transition history and operational event creation."""
 
+    filterset_fields = ["grievance"]
     search_fields = ("event_code", "grievance__tracking_code", "transition_reason", "remarks")
     ordering_fields = ("occurred_at", "created_at", "transition_type", "new_status")
 

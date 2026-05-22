@@ -18,6 +18,7 @@ class GrievanceViewSet(
 ):
     """Submission, read, and pre-workflow enrichment endpoints."""
 
+    filterset_fields = ["status", "priority", "department", "ward"]
     search_fields = ("tracking_code", "raw_text", "normalized_summary", "category_code")
     ordering_fields = ("submitted_at", "updated_at", "priority", "status")
 
