@@ -6,7 +6,7 @@ from typing import Any
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import User
+from .models import User, UserRole
 from .services import create_user, update_user_profile
 
 
@@ -82,3 +82,36 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer[User]):
         if not isinstance(value, dict):
             raise serializers.ValidationError("Expected an object keyed by language code.")
         return value
+
+
+class CitizenRegisterSerializer(serializers.ModelSerializer[User]):
+    """Public self-registration for citizens.
+
+    Role is always CITIZEN regardless of payload content — the field is not
+    declared in Meta.fields (DRF drops undeclared keys before validation) and
+    create() passes role=UserRole.CITIZEN explicitly to the service layer.
+    """
+
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "password",
+            "first_name",
+            "last_name",
+            "email",
+            "phone_number",
+            "preferred_language",
+        )
+        read_only_fields = ("id",)
+
+    def validate_password(self, value: str) -> str:
+        validate_password(value)
+        return value
+
+    def create(self, validated_data: dict[str, Any]) -> User:
+        password = validated_data.pop("password")
+        return create_user(password=password, role=UserRole.CITIZEN, **validated_data)

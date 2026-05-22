@@ -8,11 +8,10 @@ Module 1 — skeleton:
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import environ
-
-from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -54,6 +53,7 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = [
     "rest_framework",
+    "rest_framework_simplejwt",
     "rest_framework_gis",
     "corsheaders",
     "django_filters",
@@ -197,8 +197,34 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
     ],
     "DEFAULT_THROTTLE_CLASSES": [],   # filled by Module 5
-    "DEFAULT_AUTHENTICATION_CLASSES": [],  # filled by Module 6
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": [],  # filled by Module 7
+}
+
+# ---------------------------------------------------------------------------
+# SimpleJWT — token lifetimes and authentication rules.
+# ---------------------------------------------------------------------------
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "BLACKLIST_AFTER_ROTATION": False,
+    # Updates AbstractUser.last_login on every successful token obtain.
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    # Rejects users where is_active=False — second guard after ModelBackend.
+    "USER_AUTHENTICATION_RULE": (
+        "rest_framework_simplejwt.authentication.default_user_authentication_rule"
+    ),
+    "TOKEN_OBTAIN_SERIALIZER": "rest_framework_simplejwt.serializers.TokenObtainPairSerializer",
+    "TOKEN_REFRESH_SERIALIZER": "rest_framework_simplejwt.serializers.TokenRefreshSerializer",
 }
 
 # ---------------------------------------------------------------------------

@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 from rest_framework import mixins, viewsets
-from rest_framework.generics import RetrieveUpdateAPIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.generics import CreateAPIView, RetrieveUpdateAPIView
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .permissions import IsSelfOrUserAdminRole, IsUserAdminRole
 from .selectors import user_list
-from .serializers import UserProfileUpdateSerializer, UserSerializer
+from .serializers import CitizenRegisterSerializer, UserProfileUpdateSerializer, UserSerializer
+
+
+class RegisterView(CreateAPIView):
+    """Public citizen self-registration — no authentication required."""
+
+    serializer_class = CitizenRegisterSerializer
+    permission_classes = (AllowAny,)
 
 
 class CurrentUserView(RetrieveUpdateAPIView):
