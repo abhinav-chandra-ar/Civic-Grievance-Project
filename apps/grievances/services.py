@@ -204,7 +204,7 @@ def change_grievance_status(
     reason: str = "",
     metadata: Mapping[str, Any] | None = None,
 ) -> Grievance:
-    """Record status changes locally until workflow ownership exists."""
+    """Persist a status transition and fire the grievance_status_changed signal."""
     previous_status = grievance.status
     grievance.status = str(status)
     grievance.status_reason = reason
