@@ -11,4 +11,5 @@ class IntegrationsConfig(AppConfig):
     verbose_name = "Integrations"
 
     def ready(self) -> None:
-        from . import signals  # noqa: F401
+        from . import handlers  # noqa: F401  — registers signal receivers
+        from . import signals  # noqa: F401   — ensures integration_call_completed is importable
