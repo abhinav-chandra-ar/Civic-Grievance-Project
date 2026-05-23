@@ -46,6 +46,7 @@ def classify_grievance_text(
     raw_text: str,
     language_hint: str | None = None,
     image_input: object = None,
+    recent_texts: list[str] | None = None,
 ) -> dict[str, object]:
     """Return ML-enriched classification hints without mutating domain state.
 
@@ -59,9 +60,19 @@ def classify_grievance_text(
         Optional image evidence (str path, bytes, or PIL Image).
         When provided, Phase B image intelligence is applied and
         ``metadata`` is enriched with image analysis fields.
+    recent_texts
+        Optional list of recent normalised summaries from the same ward
+        (or a global sample).  Passed directly to ``analyze_complaint()``
+        so the Phase-A Jaccard duplicate detector can compare against
+        real DB content rather than an empty list.
     """
     text = raw_text.strip()
-    result = analyze_complaint(text, language_hint=language_hint, image_input=image_input)
+    result = analyze_complaint(
+        text,
+        language_hint=language_hint,
+        image_input=image_input,
+        recent_texts=recent_texts or [],
+    )
 
     img = result.get("image_analysis")  # dict or None
 
