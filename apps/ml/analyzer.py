@@ -25,10 +25,24 @@ analyze_complaint()         → main orchestrator — calls all of the above
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from collections import Counter
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# ML inference thresholds
+# ---------------------------------------------------------------------------
+# When ML confidence ≥ _ML_PRIMARY_THRESHOLD, the ML prediction is used as-is.
+# When ML confidence is in [_ML_BLEND_THRESHOLD, _ML_PRIMARY_THRESHOLD), the ML
+# and rule-engine results are blended (confidence-weighted average).
+# When ML confidence < _ML_BLEND_THRESHOLD, the rule engine result is used.
+
+_ML_PRIMARY_THRESHOLD = 0.55
+_ML_BLEND_THRESHOLD   = 0.30
 
 # ---------------------------------------------------------------------------
 # Unicode helpers
@@ -60,6 +74,12 @@ _MANGLISH_SIGNALS: frozenset[str] = frozenset({
     "thadangi", "mudangi", "block", "nokkiyille",
     # copulas / tense suffixes
     "annu", "aayirunnilla", "aayi", "aayittu",
+    # Additional past-tense / state suffixes common in civic Manglish
+    "potti", "adangi", "kavinju", "nikkunnu", "oodunnu",
+    "thirinju", "keduthu", "poyyi", "veennu",
+    # Water / pipe / drainage Manglish fragments
+    "kuzhal", "odha", "chala", "theruva", "malam", "septic",
+    "vilakku", "thirikku", "odunnu",
 })
 
 # ---------------------------------------------------------------------------
@@ -828,6 +848,210 @@ def score_analysis(
     return round(max(0.0, min(1.0, raw)), 3)
 
 
+# ===========================================================================
+# ML-backed inference helpers (primary prediction path)
+# ===========================================================================
+
+def _try_ml_category(text: str) -> dict[str, object] | None:
+    """Run ML category prediction.  Returns None if ML is unavailable.
+
+    Populates ``ml_tier`` in the result dict so ``_fuse_category`` can set
+    ``inference_source`` to ``"transformer"`` | ``"tfidf"`` correctly.
+    """
+    try:
+        from apps.ml import ml_inference  # noqa: PLC0415
+        result = ml_inference.predict_category(text)
+        # Read which tier answered AFTER the call
+        tier = ml_inference.active_tier()
+        # Treat spam / no_category predictions from ML as empty category
+        if result.label in {"spam", "no_category"}:
+            return {
+                "category_code": "",
+                "confidence":    0.0,
+                "ml_label":      result.label,
+                "ml_confidence": result.confidence,
+                "ml_tier":       tier,
+            }
+        return {
+            "category_code": result.label,
+            "confidence":    result.confidence,
+            "ml_label":      result.label,
+            "ml_confidence": result.confidence,
+            "ml_tier":       tier,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ML category unavailable: %s", exc)
+        return None
+
+
+def _try_ml_priority(text: str, category_code: str = "") -> str | None:
+    """Run ML priority prediction.  Returns None if ML is unavailable."""
+    try:
+        from apps.ml.ml_inference import ModelUnavailable, predict_priority as ml_prio  # noqa: PLC0415
+        result = ml_prio(text)
+        if result.confidence >= _ML_BLEND_THRESHOLD:
+            return result.label
+    except (Exception,):  # noqa: BLE001
+        pass
+    return None
+
+
+def _try_ml_spam(text: str) -> dict[str, object] | None:
+    """Run ML spam detection.  Returns None if ML is unavailable."""
+    try:
+        from apps.ml.ml_inference import ModelUnavailable, predict_spam as ml_spam  # noqa: PLC0415
+        result = ml_spam(text)
+        return {
+            "is_spam":    result.is_spam,
+            "spam_score": result.spam_score,
+            "spam_reason": "ml_spam_detector" if result.is_spam else "",
+        }
+    except (Exception,):  # noqa: BLE001
+        return None
+
+
+def _try_ml_language(text: str) -> dict[str, object] | None:
+    """Run ML language detection.  Returns None if ML is unavailable."""
+    try:
+        from apps.ml.ml_inference import ModelUnavailable, predict_language as ml_lang  # noqa: PLC0415
+        result = ml_lang(text)
+        if result.confidence >= _ML_BLEND_THRESHOLD:
+            # Map ML labels to the rule-engine vocabulary
+            lang_map = {"en": "english", "ml": "malayalam", "manglish": "manglish", "mixed": "mixed"}
+            return {
+                "language":   lang_map.get(result.language, result.language),
+                "script":     "malayalam" if result.language == "ml" else "latin",
+                "confidence": result.confidence,
+            }
+    except (Exception,):  # noqa: BLE001
+        pass
+    return None
+
+
+def _fuse_category(
+    rule_result: dict[str, object],
+    ml_result: dict[str, object] | None,
+) -> dict[str, object]:
+    """Blend rule-engine and ML category predictions.
+
+    Fusion strategy
+    ---------------
+    ML confidence >= _ML_PRIMARY_THRESHOLD (0.55)
+        ML wins outright.  ``source`` = ml_tier ("transformer" | "tfidf").
+    ML confidence in [_ML_BLEND_THRESHOLD, 0.55)
+        Blend: if both agree → average confidence, source = "<tier>_fusion";
+               if disagree → higher-confidence source wins × 0.85 discount.
+    ML confidence < _ML_BLEND_THRESHOLD
+        Rule engine result returned as-is (source not set → "rule").
+    ML unavailable
+        Rule engine result returned as-is.
+    """
+    if ml_result is None:
+        return rule_result
+
+    ml_conf   = float(ml_result.get("ml_confidence", 0.0))
+    rule_conf = float(rule_result.get("confidence", 0.0))
+    ml_cat    = str(ml_result.get("ml_label", ""))
+    rule_cat  = str(rule_result.get("category_code", ""))
+    tier      = str(ml_result.get("ml_tier", "ml"))  # "transformer" | "tfidf"
+
+    if ml_conf >= _ML_PRIMARY_THRESHOLD:
+        cat = str(ml_result.get("category_code", ""))
+        return {
+            "category_code": cat,
+            "confidence":    round(ml_conf, 3) if cat else 0.0,
+            "source":        tier,           # "transformer" or "tfidf"
+        }
+
+    if ml_conf >= _ML_BLEND_THRESHOLD:
+        if ml_cat == rule_cat and ml_cat:
+            blended = round((ml_conf + rule_conf) / 2, 3)
+            return {
+                "category_code": ml_cat,
+                "confidence":    blended,
+                "source":        f"{tier}_fusion",
+            }
+        if ml_conf >= rule_conf:
+            return {
+                "category_code": str(ml_result["category_code"]),
+                "confidence":    round(ml_conf * 0.85, 3),
+                "source":        f"{tier}_over_rule",
+            }
+        return {
+            "category_code": rule_cat,
+            "confidence":    round(rule_conf * 0.85, 3),
+            "source":        f"rule_over_{tier}",
+        }
+
+    # ML confidence too low — trust rule engine
+    return rule_result
+
+
+def _try_transformer_location(text: str) -> list[dict] | None:
+    """Use transformer-based ward candidate ranking.
+
+    Returns a list of {name, ward_code, score} dicts (top-5), or None if
+    transformer is not available or similarity is too low.
+    """
+    try:
+        from apps.ml.transformer_inference import get_transformer_engine  # noqa: PLC0415
+        engine = get_transformer_engine()
+        if not engine.is_ready:
+            return None
+        loc_result = engine.find_ward_candidates(text, top_k=5)
+        if loc_result.top_score < 0.40:
+            return None
+        candidates = []
+        for name, score in loc_result.candidates:
+            if score >= 0.35:
+                ward_code = _LANDMARK_ALIASES.get(name.lower(), (name, "unknown"))[1]
+                candidates.append({
+                    "name":          name,
+                    "ward_code":     ward_code,
+                    "alias_matched": name,
+                    "score":         round(float(score), 3),
+                })
+        return candidates if candidates else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Transformer location failed: %s", exc)
+        return None
+
+
+def _try_ml_duplicate(
+    text: str,
+    recent_texts: Sequence[str],
+) -> dict[str, object] | None:
+    """Semantic / TF-IDF cosine duplicate detection via ml_inference tier chain."""
+    if not recent_texts or not text.strip():
+        return None
+    try:
+        from apps.ml import ml_inference  # noqa: PLC0415
+        best_score = 0.0
+        best_text: str | None = None
+        for recent in recent_texts:
+            sim = ml_inference.compute_duplicate_similarity(text, recent)
+            if sim > best_score:
+                best_score = sim
+                best_text = recent
+        tier = ml_inference.active_tier()
+        _DUPLICATE_THRESHOLD = 0.55
+        is_dup = best_score >= _DUPLICATE_THRESHOLD
+        return {
+            "is_duplicate":     is_dup,
+            "similarity_score": round(best_score, 3),
+            "matching_text":    best_text if is_dup else None,
+            "method":           tier,   # "transformer" | "tfidf"
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("ML duplicate check failed: %s", exc)
+        return None
+
+
+# ===========================================================================
+# Main orchestrator (ML primary + rule fallback + fusion)
+# ===========================================================================
+
+
 def analyze_complaint(
     text: str,
     *,
@@ -836,6 +1060,13 @@ def analyze_complaint(
     image_input: object = None,
 ) -> dict[str, object]:
     """Orchestrate all analysis steps and return the complete intelligence payload.
+
+    Pipeline
+    --------
+    PRIMARY:  ML-backed inference (TF-IDF + LogisticRegression, trained models).
+    FALLBACK: Rule-based inference (keyword matching, heuristics).
+    FUSION:   When both ML and rule engine produce results, confidence-weighted
+              blending is applied (see _fuse_category).
 
     Parameters
     ----------
@@ -859,32 +1090,90 @@ def analyze_complaint(
         landmarks, ward_hint, landmark_confidence,
         priority, spam, duplicate,
         needs_human_review, review_reasons, confidence,
-        image_analysis  (None when no image provided)
+        image_analysis  (None when no image provided),
+        decision,
+        inference_source  ("transformer" | "tfidf" | "rule" | "<tier>_fusion" — category source)
     """
-    # ── Phase 1: language ────────────────────────────────────────────────
-    lang_result = detect_language(text)
-    effective_language = language_hint or lang_result["language"]
+    # ── Phase 1: language (ML primary, rule fallback) ────────────────────
+    ml_lang = _try_ml_language(text)
+    if ml_lang is not None:
+        lang_result = ml_lang
+    else:
+        lang_result = detect_language(text)
+    effective_language = language_hint or str(lang_result["language"])
 
     # ── Phase 2: normalise ───────────────────────────────────────────────
     normalized = normalize_text(text)
 
-    # ── Phase 3: spam ────────────────────────────────────────────────────
-    spam_result = detect_spam(text)
+    # ── Phase 3: spam (ML primary, rule fallback) ────────────────────────
+    ml_spam_res = _try_ml_spam(text)
+    rule_spam   = detect_spam(text)
+    if ml_spam_res is not None:
+        # Use ML spam score but keep rule reason when rule fires strongly
+        if float(ml_spam_res["spam_score"]) >= _ML_BLEND_THRESHOLD:
+            spam_result = ml_spam_res
+        else:
+            # Blend: take the higher spam score (conservative)
+            combined_score = max(
+                float(ml_spam_res["spam_score"]),
+                float(rule_spam.get("spam_score", 0.0)),
+            )
+            spam_result = {
+                "is_spam":    combined_score >= 0.50,
+                "spam_score": round(combined_score, 3),
+                "spam_reason": rule_spam.get("spam_reason", ""),
+            }
+    else:
+        spam_result = rule_spam
 
-    # ── Phase 4: category ────────────────────────────────────────────────
-    category_result = classify_issue(text)
+    # ── Phase 4: category (ML primary, rule fallback, fusion) ────────────
+    ml_cat_res   = _try_ml_category(text)
+    rule_cat_res = classify_issue(text)
+    fused_cat    = _fuse_category(rule_cat_res, ml_cat_res)
+    category_result  = fused_cat
+    inference_source = str(fused_cat.get("source", "rule"))
 
-    # ── Phase 5: department ──────────────────────────────────────────────
+    # ── Phase 5: department (ML-aware: prefer ML dept, else rule mapping) ─
     dept_code = detect_department(str(category_result["category_code"]))
+    # If rule mapping returns empty but we have a category, try ML dept prediction
+    if not dept_code and str(category_result.get("category_code", "")):
+        try:
+            from apps.ml.ml_inference import predict_department  # noqa: PLC0415
+            dept_pred = predict_department(text)
+            if dept_pred.confidence >= _ML_BLEND_THRESHOLD and dept_pred.label != "none":
+                dept_code = dept_pred.label
+        except Exception:  # noqa: BLE001
+            pass
 
-    # ── Phase 6: landmarks ───────────────────────────────────────────────
+    # ── Phase 6: landmarks (rule-based + transformer hybrid) ─────────────
     landmark_result = extract_landmarks(text)
+    # Supplement with transformer location intelligence when available.
+    # If dictionary-based extraction found no landmarks, try embedding lookup.
+    # If both find landmarks, merge them (dictionary result takes priority).
+    if not landmark_result["landmarks"]:
+        transformer_locs = _try_transformer_location(text)
+        if transformer_locs:
+            landmark_result = {
+                "landmarks":  transformer_locs,
+                "ward_hint":  transformer_locs[0]["ward_code"],
+                "confidence": round(
+                    min(0.3 + transformer_locs[0].get("score", 0.5) * 0.5, 0.75), 3
+                ),
+            }
 
-    # ── Phase 7: priority ────────────────────────────────────────────────
-    priority = predict_priority(text, str(category_result["category_code"]))
+    # ── Phase 7: priority (ML primary, rule fallback) ────────────────────
+    ml_priority = _try_ml_priority(text, str(category_result["category_code"]))
+    if ml_priority is not None:
+        priority = ml_priority
+    else:
+        priority = predict_priority(text, str(category_result["category_code"]))
 
-    # ── Phase 8: duplicate check ─────────────────────────────────────────
-    dup_result = detect_possible_duplicate(text, recent_texts or [])
+    # ── Phase 8: duplicate check (ML cosine primary, Jaccard fallback) ───
+    ml_dup = _try_ml_duplicate(text, recent_texts or [])
+    if ml_dup is not None:
+        dup_result = ml_dup
+    else:
+        dup_result = detect_possible_duplicate(text, recent_texts or [])
 
     # ── Phase 9: overall confidence ──────────────────────────────────────
     overall_confidence = score_analysis(
@@ -937,7 +1226,6 @@ def analyze_complaint(
                 review_reasons.append("image_contradicts_complaint")
 
     # ── Phase 12: decision intelligence ─────────────────────────────────
-    # Build the partial payload that make_final_decision needs, then call it.
     from apps.ml.decision_engine import make_final_decision  # noqa: PLC0415
 
     _decision_input: dict[str, object] = {
@@ -955,7 +1243,6 @@ def analyze_complaint(
     decision = make_final_decision(_decision_input)
 
     # Phase C may extend review_reasons (deduplicated inside make_final_decision).
-    # Sync back so needs_human_review stays consistent.
     review_reasons = list(decision["review_reasons"])
 
     return {
@@ -976,4 +1263,5 @@ def analyze_complaint(
         "confidence":          overall_confidence,
         "image_analysis":      image_analysis,
         "decision":            decision,
+        "inference_source":    inference_source,
     }

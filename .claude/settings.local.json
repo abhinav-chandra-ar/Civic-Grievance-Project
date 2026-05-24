@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql -U postgres -c \"ALTER USER grievance CREATEDB;\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"import sklearn; import scipy; import joblib; print\\('sklearn', sklearn.__version__, '| scipy', scipy.__version__, '| joblib', joblib.__version__\\)\")",
+      "Bash(python -m apps.ml.training.train_models --eval)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/ml/test_ml_inference.py tests/ml/test_training.py -v --no-header --tb=short)",
+      "Bash(poetry run *)",
+      "Bash(where pytest *)",
+      "Bash(where python *)",
+      "PowerShell(cd \"C:\\\\Users\\\\91918\\\\OneDrive\\\\Desktop\\\\Civic-Grievance-Project\\\\grievance-core\"; $pythonCmd = \\(Get-Command python -ErrorAction SilentlyContinue\\).Source; Write-Host \"Python: $pythonCmd\"; $pytestCmd = \\(Get-Command pytest -ErrorAction SilentlyContinue\\).Source; Write-Host \"pytest: $pytestCmd\")",
+      "Bash(python -c \"import pytest; print\\(pytest.__version__\\)\")",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Read(//c/Users/91918/AppData/Roaming/Python/**)"
+    ]
+  }
+}

@@ -70,6 +70,7 @@ LOCAL_APPS = [
     "apps.slas.apps.SlasConfig",
     "apps.audit.apps.AuditConfig",
     "apps.integrations.apps.IntegrationsConfig",
+    "apps.ml.apps.MlConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

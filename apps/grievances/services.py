@@ -175,6 +175,17 @@ def create_grievance_with_foundation_records(
         },
         remarks="Grievance created through orchestration service.",
     )
+    # AI enrichment runs last so that all foundation records are already committed
+    # inside this savepoint before enrichment writes.  enrich_grievance_with_ai()
+    # never raises — both the AI call and the update_grievance_enrichment() write
+    # (which is itself @transaction.atomic, i.e. a savepoint) are wrapped in
+    # try/except, so any AI or DB failure here logs a warning and returns False
+    # without touching the outer transaction.
+    # Lazy import mirrors the pattern used in integrations/services.py to avoid
+    # the mutual grievances ↔ integrations module-level circular dependency.
+    from apps.integrations.services import enrich_grievance_with_ai  # noqa: PLC0415
+
+    enrich_grievance_with_ai(grievance=grievance)
     return grievance
 
 

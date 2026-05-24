@@ -152,6 +152,10 @@ class Grievance(models.Model):
             models.Index(fields=["status", "submitted_at"], name="grievance_status_submitted_idx"),
             models.Index(fields=["department", "status"], name="grv_department_status_idx"),
             models.Index(fields=["ward", "status"], name="grievance_ward_status_idx"),
+            # Covers citizen-facing list queries: WHERE submitter_id=X ORDER BY submitted_at DESC.
+            models.Index(fields=["submitter", "submitted_at"], name="grv_submitter_submitted_idx"),
+            # Covers unfiltered ORDER BY submitted_at DESC (e.g. duplicate-context selector).
+            models.Index(fields=["-submitted_at"], name="grv_submitted_at_desc_idx"),
         ]
         constraints = [
             models.CheckConstraint(

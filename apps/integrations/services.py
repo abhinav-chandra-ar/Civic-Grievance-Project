@@ -188,6 +188,15 @@ def analyze_grievance_submission(
         # Phase D — AI decision surfaced at the top level
         "ai_decision":      ai_decision,
         "ai_explainability": ai_explainability,
+        # Phase E — routing context: ML hints surfaced for FK resolution.
+        # DB lookups (Ward, Department) are deferred to enrich_grievance_with_ai()
+        # so this function remains free of DB side-effects.
+        "routing_context": {
+            "ward_hint":       nlp_result["metadata"]["ward_hint"],
+            "landmark_hints":  nlp_result["metadata"]["landmark_hints"],
+            "category_code":   str(nlp_result["category_code"]),
+            "department_code": str(nlp_result["department_code"]),
+        },
         # Backward-compatible provider metadata (unchanged shape)
         "provider_metadata": {
             "nlp": {
@@ -281,6 +290,30 @@ def enrich_grievance_with_ai(
                 ),
             },
         }
+
+        # Phase E — KSMART-style ward/department/queue resolution.
+        # Wrapped in its own try/except so a routing failure (e.g. ward
+        # not yet seeded in DB) is logged as a warning but never blocks
+        # the base enrichment from completing.
+        try:
+            from apps.integrations.routing import build_phase_e_routing  # noqa: PLC0415
+
+            routing_context = payload.get("routing_context") or {}
+            phase_e = build_phase_e_routing(
+                routing_context=routing_context,
+                ai_decision=ai_decision,
+            )
+            enrichment_values["ward"]       = phase_e["ward_instance"]
+            enrichment_values["department"] = phase_e["department_instance"]
+            enrichment_values["status_metadata"]["phase_e_routing"] = (
+                phase_e["routing_metadata"]
+            )
+        except Exception as _phase_e_exc:  # noqa: BLE001
+            _logger.warning(
+                "Phase E routing failed for grievance pk=%s: %s",
+                getattr(grievance, "pk", "?"),
+                _phase_e_exc,
+            )
 
         from apps.grievances.services import update_grievance_enrichment  # noqa: PLC0415
 

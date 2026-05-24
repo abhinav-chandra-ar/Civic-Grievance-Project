@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from django.contrib.postgres.indexes import GinIndex
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
@@ -82,6 +83,8 @@ class Department(models.Model):
         ordering = ("name", "code")
         indexes = [
             models.Index(fields=["is_active", "name"], name="departments_active_name_idx"),
+            # Enables indexed JSONB @> (contains) lookups for department_list_for_category().
+            GinIndex(fields=["handled_categories"], name="dept_categories_gin_idx"),
         ]
 
     def __str__(self) -> str:
