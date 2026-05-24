@@ -6,11 +6,11 @@ What this script does
 ---------------------
 1. Expands corpus_data_v2.py seeds into 6 000+ samples via generate_corpus_v2.
 2. Loads the frozen SentenceTransformer backbone
-   (paraphrase-multilingual-MiniLM-L12-v2 — 118 MB, CPU-friendly, 50+ languages).
-3. Encodes ALL training samples in batches → 384-dim embeddings.
+   (paraphrase-multilingual-MiniLM-L12-v2 -- 118 MB, CPU-friendly, 50+ languages).
+3. Encodes ALL training samples in batches -> 384-dim embeddings.
 4. Trains one LogisticRegression head per task on the frozen embeddings:
       category, priority, department, spam, language
-5. Pre-encodes the 42 TVM ward/landmark names for location intelligence.
+5. Pre-encodes TVM ward/landmark names + compound aliases for location intelligence.
 6. Saves two joblib artefacts:
       apps/ml/models/transformer_heads.joblib
       apps/ml/models/landmark_embeddings.joblib
@@ -172,8 +172,8 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── 1. Load corpus ────────────────────────────────────────────────────
-    _banner("Step 1 / 5 — Loading training corpus")
+    # -- 1. Load corpus ----------------------------------------------------
+    _banner("Step 1 / 5 -- Loading training corpus")
     samples = _load_samples(target)
     texts      = [s[0] for s in samples]
     categories = [s[1] for s in samples]
@@ -182,7 +182,7 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
 
     # Derive language labels from text heuristic (fallback for samples
     # that don't have an explicit language annotation in the corpus).
-    # Simple heuristic: Unicode Malayalam block → "ml"; Manglish keywords → "manglish";
+    # Simple heuristic: Unicode Malayalam block -> "ml"; Manglish keywords -> "manglish";
     # mixed detection; else "en".
     def _detect_lang(text: str) -> str:
         malayalam_chars = sum(1 for c in text if "ഀ" <= c <= "ൿ")
@@ -203,21 +203,21 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
     # Derive spam labels
     spam_labels = ["spam" if c == "spam" else "not_spam" for c in categories]
 
-    # ── 2. Load backbone ──────────────────────────────────────────────────
-    _banner("Step 2 / 5 — Loading transformer backbone")
+    # -- 2. Load backbone --------------------------------------------------
+    _banner("Step 2 / 5 -- Loading transformer backbone")
     t0 = time.time()
     print(f"  Model : {_BACKBONE_MODEL}")
     backbone = SentenceTransformer(_BACKBONE_MODEL)
     print(f"  Loaded in {time.time() - t0:.1f}s")
 
-    # ── 3. Encode corpus ──────────────────────────────────────────────────
-    _banner("Step 3 / 5 — Encoding training corpus")
+    # -- 3. Encode corpus --------------------------------------------------
+    _banner("Step 3 / 5 -- Encoding training corpus")
     t0 = time.time()
     X = _encode_texts(backbone, texts, batch_size=128, desc="Encoding corpus")
     print(f"  Encoded {len(texts)} samples -> shape {X.shape} in {time.time() - t0:.1f}s")
 
-    # ── 4. Train classifier heads ─────────────────────────────────────────
-    _banner("Step 4 / 5 — Training classifier heads")
+    # -- 4. Train classifier heads -----------------------------------------
+    _banner("Step 4 / 5 -- Training classifier heads")
 
     tasks: list[tuple[str, list[str], float]] = [
         ("category",   categories,  5.0),
@@ -230,7 +230,7 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
     heads: dict[str, Any] = {}
     if evaluate:
         print(f"  {'Head':<20}  {'acc':>6}  {'f1':>6}")
-        print(f"  {'─'*20}  {'─'*6}  {'─'*6}")
+        print(f"  {'-'*20}  {'-'*6}  {'-'*6}")
 
     for task_name, y, C in tasks:
         t0 = time.time()
@@ -243,18 +243,20 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
         if evaluate:
             _evaluate_head(X, y, clf, le, task_name, cv=5)
 
-    # ── 5a. Save transformer heads ────────────────────────────────────────
-    _banner("Step 5 / 5 — Saving artefacts")
+    # -- 5a. Save transformer heads ----------------------------------------
+    _banner("Step 5 / 5 -- Saving artefacts")
     joblib.dump(heads, _HEADS_FILE)
     print(f"  Saved transformer heads -> {_HEADS_FILE}")
 
-    # ── 5b. Pre-encode landmark embeddings ────────────────────────────────
-    from apps.ml.training.corpus_data_v2 import TVM_LOCATIONS  # noqa: PLC0415
-    print(f"  Encoding {len(TVM_LOCATIONS)} TVM landmarks...")
-    landmark_embs = backbone.encode(TVM_LOCATIONS, normalize_embeddings=True)
+    # -- 5b. Pre-encode landmark embeddings --------------------------------
+    # Use TVM_LOCATIONS_EXTENDED (v2 single names + v3 compound aliases)
+    # so find_ward_candidates() can match real complaint descriptions.
+    from apps.ml.training.corpus_data_v3 import TVM_LOCATIONS_EXTENDED  # noqa: PLC0415
+    print(f"  Encoding {len(TVM_LOCATIONS_EXTENDED)} TVM landmarks (incl. compound aliases)...")
+    landmark_embs = backbone.encode(TVM_LOCATIONS_EXTENDED, normalize_embeddings=True)
     landmark_data = {
         "embeddings": landmark_embs,
-        "names":      TVM_LOCATIONS,
+        "names":      TVM_LOCATIONS_EXTENDED,
     }
     joblib.dump(landmark_data, _LANDMARK_FILE)
     print(f"  Saved landmark embeddings -> {_LANDMARK_FILE}")

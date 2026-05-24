@@ -75,6 +75,30 @@ from apps.ml.training.corpus_data_v2 import (
 )
 
 # ---------------------------------------------------------------------------
+# Bias-repair additions from corpus_data_v3 (FIX 1-4)
+# ---------------------------------------------------------------------------
+from apps.ml.training.corpus_data_v3 import (
+    DRAINAGE_ML_ADDITIONS,
+    DRAINAGE_SEWAGE_CONTRASTIVE,
+    ILLEGAL_CONSTRUCTION_ML_ADDITIONS,
+    PRIORITY_EMOTIONAL_ANCHORS,
+    SEWAGE_ML_ADDITIONS,
+    TVM_LOCATION_ALIASES,
+    TVM_LOCATIONS_EXTENDED,
+)
+
+# Merged seed set: v2 + v3 bias-repair samples.
+# These are used as the BASE before augmentation.
+_ALL_SEEDS: list[TrainingSample] = (
+    ALL_SAMPLES
+    + DRAINAGE_ML_ADDITIONS
+    + SEWAGE_ML_ADDITIONS
+    + ILLEGAL_CONSTRUCTION_ML_ADDITIONS
+    + DRAINAGE_SEWAGE_CONTRASTIVE
+    + PRIORITY_EMOTIONAL_ANCHORS
+)
+
+# ---------------------------------------------------------------------------
 # Random seed for reproducibility
 # ---------------------------------------------------------------------------
 _RNG = random.Random(42)
@@ -357,7 +381,7 @@ def expand_corpus(
 
     Parameters
     ----------
-    seeds:         The raw TrainingSample list from corpus_data_v2.ALL_SAMPLES.
+    seeds:         The raw TrainingSample list (ALL_SAMPLES + v3 bias-repair additions).
     target:        Desired minimum number of output samples.
     civic_factor:  Number of augmented variants to generate per civic seed.
     spam_factor:   Number of augmented variants to generate per spam/no_category seed.
@@ -453,7 +477,7 @@ def build_dataset(
     spam_factor: int = 4,
 ) -> list[TrainingSample]:
     """Build and return the expanded training dataset."""
-    return expand_corpus(ALL_SAMPLES, target=target,
+    return expand_corpus(_ALL_SEEDS, target=target,
                          civic_factor=civic_factor, spam_factor=spam_factor)
 
 

@@ -1,0 +1,197 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+======================================================================
+  TVMC ML BIAS & FAIRNESS AUDIT
+======================================================================
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|##########| 199/199 [00:00<00:00, 2428.76it/s]
+  Engine: READY  backbone=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+----------------------------------------------------------------------
+  [1/6] LANGUAGE BIAS -- category accuracy per language group
+----------------------------------------------------------------------
+
+  Group            N  Correct  Accuracy   MacroF1  Bar
+  ------------  ----  -------  --------  --------  --------------------
+  english         84       68    81.0%     0.675  ##############......
+  malayalam       54       33    61.1%     0.604  ############........
+  manglish        45       43    95.6%     0.869  #################...
+  mixed           27       27   100.0%     1.000  ####################
+
+  Max-Min F1 gap: 0.396  (best=mixed 1.000, worst=malayalam 0.604)
+  Language bias severity: HIGH
+
+  Category                       EN      ML      MG      MX
+  -------------------------  ------  ------  ------  ------
+  drainage                     0.80    0.50    0.89    1.00
+  electrical_hazard            0.84    0.44    1.00    1.00
+  illegal_construction         0.86    0.20    1.00    1.00
+  road_damage                  0.70    0.92    1.00    1.00
+  sewage_issue                 0.82    0.50    0.91    1.00
+  solid_waste                  0.80    0.60    1.00    1.00
+  street_light                 0.88    0.77    1.00    1.00
+  tree_fall                    1.00    0.67    1.00    1.00
+  water_supply                 0.74    0.83    0.89    1.00
+
+----------------------------------------------------------------------
+  [2/6] CATEGORY IMBALANCE -- per-category P/R/F1/support
+----------------------------------------------------------------------
+
+  Category                        P       R      F1    Sup  Status
+  -------------------------  ------  ------  ------  -----  ----------
+  drainage                    0.704   0.792   0.745     24  WEAK
+  electrical_hazard           0.900   0.750   0.818     24  FAIR
+  illegal_construction        0.833   0.682   0.750     22  FAIR
+  road_damage                 0.840   0.875   0.857     24  GOOD
+  sewage_issue                0.677   0.875   0.764     24  FAIR
+  solid_waste                 0.864   0.792   0.826     24  FAIR
+  street_light                0.870   0.909   0.889     22  GOOD
+  tree_fall                   1.000   0.864   0.927     22  GOOD
+  water_supply                0.864   0.792   0.826     24  FAIR
+
+  Macro:    P=0.686  R=0.666  F1=0.673
+  Weighted: P=0.837  R=0.814  F1=0.822
+  Accuracy: 81.4%  (171/210)
+
+  Weak classes (F1 < 0.75): drainage
+
+----------------------------------------------------------------------
+  [3/6] DEPARTMENT ROUTING -- distribution + confusion
+----------------------------------------------------------------------
+
+  Department       True%   Pred%     Bias      F1  Distribution bar (predicted)
+  --------------  ------  ------  -------  ------  -------------------------
+  drainage         11.4%   14.3%   +0.029   0.704  ####.....................
+  electricity      21.9%   18.6%   -0.033   0.894  #####....................
+  none              0.0%    0.5%   +0.005   0.000  .........................
+  parks            10.5%    8.6%   -0.019   0.900  ##.......................
+  planning         10.5%    9.0%   -0.014   0.780  ##.......................
+  roads            11.4%   12.4%   +0.010   0.840  ###......................
+  sanitation       11.4%   11.0%   -0.005   0.809  ###......................
+  sewage           11.4%   15.2%   +0.038   0.750  ####.....................
+  water            11.4%   10.5%   -0.010   0.826  ###......................
+
+  Overall department accuracy: 81.4%
+
+  Confusion matrix (rows=true, cols=predicted):
+                  draina  electr    none   parks  planni   roads  sanita  sewage   water
+  drainage            19       0       0       0       0       0       0       2       3
+  electricity          1      38       0       0       1       2       1       3       0
+  none                 0       0       0       0       0       0       0       0       0
+  parks                2       0       0      18       2       0       0       0       0
+  planning             1       0       0       0      16       1       1       3       0
+  roads                2       0       0       0       0      21       1       0       0
+  sanitation           2       1       1       0       0       1      19       0       0
+  sewage               2       0       0       0       0       0       1      21       0
+  water                1       0       0       0       0       1       0       3      19
+
+----------------------------------------------------------------------
+  [4/6] SPAM FALSE POSITIVES -- genuine complaints flagged as spam
+----------------------------------------------------------------------
+
+  Subcategory              N   FP/FN     Rate  Status
+  --------------------  ----  ------  -------  ----------
+  short_genuine           15    1 FP    6.7%  CONCERN
+    X score=0.925  "vellam varunnilla urgent help"
+  typo                    10    0 FP    0.0%  GOOD
+  poor_grammar            10    0 FP    0.0%  GOOD
+  emotional               10    0 FP    0.0%  GOOD
+  actual_spam             10    1 FN   10.0%  CONCERN
+    X score=0.474  "please ignore this"
+
+  Overall genuine-complaint FP rate: 1/45 = 2.2%
+
+----------------------------------------------------------------------
+  [5/6] LOCATION BIAS -- common vs rare ward detection
+----------------------------------------------------------------------
+
+  Location text (truncated)                          Expected         Top-1   Score  Hit?
+  ---------------------------------------------  ------------  ------------  ------  -----
+  road damage near Pattom junction opposite SU         Pattom  Pattom junction SUT hospital   0.631    HIT
+  water supply problem near Kazhakkoottam Tech   Kazhakkoottam  Kazhakkoottam junction Technopark   0.515    HIT
+  drain blocked near Karamana bridge junction        Karamana  Karamana bridge junction   0.774    HIT
+  sewage overflow near Medical College hospita   Medical College  Medical College hospital campus   0.504    HIT
+  pothole near Kowdiar Palace junction                Kowdiar  Kowdiar palace junction   0.780    HIT
+  street light broken in Palayam market area          Palayam  Palayam market junction   0.565    HIT
+  tree fell near Vattiyoorkavu junction main r   Vattiyoorkavu  Pattom main road   0.566   TOP3
+  garbage not collected Sreekariyam near engin    Sreekariyam  Sreekaryam University campus   0.458   MISS
+  waterlogging in Nalanchira near the bypass r     Nalanchira  Thiruvallam backwaters road   0.619   MISS
+  road broken near Nanthancode junction           Nanthancode  Nanthancode main road   0.798    HIT
+  drainage issue near Vazhuthacaud petrol stat   Vazhuthacaud  Vazhuthacaud overbridge   0.486    HIT
+  electrical hazard near Thycaud church area          Thycaud  Palayam Unity Church junction   0.432   TOP3
+  pothole near Jagathy bridge entrance                Jagathy  Karamana bridge junction   0.638   MISS
+  drain overflow near Kunnukuzhy junction          Kunnukuzhy  Vazhuthacaud overbridge   0.580   MISS
+  illegal construction near Sasthamangalam lak   Sasthamangalam  Sasthamangalam   0.474    HIT
+  garbage dump near Mannanthala panchayat offi    Mannanthala  near Kesavadasapuram post office   0.442   MISS
+  pipe burst near Pangode military camp entran        Pangode  Pangode military station road   0.592    HIT
+  drain blocked near Edavakode colony               Edavakode  Vazhuthacaud overbridge   0.489   MISS
+  tree fallen Kariavattom university campus ro    Kariavattom  Sreekaryam University campus   0.570   TOP3
+  road broken near Pangappara junction south       Pangappara  Pattom main road   0.594   MISS
+  water supply cut Kachani ward last four days        Kachani       Kachani   0.348    HIT
+  sewage overflow near Muttada colony road            Muttada  Chalai market road   0.497   MISS
+  electrical pole fallen near Ponnumangalam ro   Ponnumangalam  Vazhuthacaud Kowdiar road   0.502   MISS
+  garbage not collected in Melamcode ward           Melamcode   Nanthancode   0.348   MISS
+
+  Tier         N   Top-1 %   Top-3 %   Avg Score  Status
+  --------  ----  --------  --------  ----------  ----------
+  common       8    75.0%    87.5%       0.599  GOOD
+  medium       8    37.5%    50.0%       0.559  WEAK
+  rare         8    25.0%    37.5%       0.493  WEAK
+
+  Common–Rare top-1 gap: +50.0%  Severity: HIGH
+
+----------------------------------------------------------------------
+  [6/6] PRIORITY BIAS -- emotional wording inflation
+----------------------------------------------------------------------
+
+  Category                    True   Neutral   Emotional  Delta
+  ----------------------  --------  --------  ----------  ----------
+  street_light              medium    medium      medium  =  stable
+  solid_waste               medium       low      medium  +1 INFLATED
+  water_supply              medium    medium      medium  =  stable
+  road_damage               medium      high        high  =  stable
+  drainage                    high      high      urgent  +1 INFLATED
+  street_light                high  critical      medium  -3 deflated
+  water_supply                high      high      urgent  +1 INFLATED
+  illegal_construction        high      high        high  =  stable
+  tree_fall                   high  critical      medium  -3 deflated
+  sewage_issue                high      high      medium  -1 deflated
+  road_damage                 high      high        high  =  stable
+  street_light              medium    medium      medium  =  stable
+
+  Inflation: 3/12 pairs (25%)  | Same: 6  Deflated: 3
+  Priority inflation severity: MEDIUM
+
+======================================================================
+  [BIAS AUDIT REPORT]
+======================================================================
+
+  Check                           Severity  Detail
+  ------------------------------  --------  --------------------------------------------------
+  Language bias                   HIGH    
+    Detail : F1 gap across language groups: 0.396. Worst: malayalam.
+    Fix    : Augment Manglish/mixed-language training samples. Use back-translation to expand minority-language corpus.
+
+  Category imbalance              HIGH    
+    Detail : Macro F1=0.673. Weak classes: drainage.
+    Fix    : Add 50+ training samples for drainage using diverse real-world phrasings.
+
+  Location (ward) bias            HIGH    
+    Detail : Common ward top-1 acc=75%, Rare ward top-1 acc=25%, gap=+50%.
+    Fix    : Pre-encode all 101 TVM ward names in the landmark embeddings. Add synthetic location-specific complaint samples for rare wards.
+
+  Department routing bias         MEDIUM  
+    Detail : Accuracy=81.4%. Distribution balanced.
+    Fix    : Review routing rules for biased departments. Consider a dedicated department-routing layer with calibration.
+
+  Priority inflation bias         MEDIUM  
+    Detail : Emotional wording inflated priority in 25% of test pairs.
+    Fix    : Add training samples with emotional language but correct (non-inflated) priority labels. Use adversarial examples in priority head training.
+
+  Spam false positive bias        LOW     
+    Detail : Genuine-complaint FP rate: 2.2%.
+    Fix    : Spam detection is not over-triggering on genuine complaints.
+
+----------------------------------------------------------------------
+  Summary: 3 HIGH  |  2 MEDIUM  |  1 LOW findings
+  ACTION REQUIRED: 3 high-severity bias(es) detected. Retrain before production.
+======================================================================
