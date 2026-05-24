@@ -5,6 +5,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -106,6 +107,83 @@ def transition_grievance(
     event.full_clean()
     event.save()
     workflow_event_recorded.send(sender=WorkflowEvent, workflow_event=event)
+    return event
+
+
+@transaction.atomic
+def escalate_grievance_from_system(
+    *,
+    grievance,
+    transition_reason: str,
+    escalation_metadata: Mapping[str, Any] | None = None,
+) -> WorkflowEvent:
+    """Record a system-generated escalation event without mutating grievance status.
+
+    Creates an ESCALATION :class:`WorkflowEvent` whose ``previous_status``
+    and ``new_status`` are both the grievance's current status.  This means:
+
+    * The grievance row is **not** touched — no status rewrite, no
+      ``status_reason``/``status_metadata`` overwrite.
+    * The email handler skips the citizen notification (previous == new).
+    * The audit log records an ``ESCALATION`` action for traceability.
+
+    A ``__system__`` user (role ``system_operator``) is get-or-created as the
+    actor so this function can be called from automated paths (AI enrichment,
+    management commands) without a human user in context.
+
+    Parameters
+    ----------
+    grievance
+        A :class:`~apps.grievances.models.Grievance` instance.
+    transition_reason
+        Human-readable reason for the escalation (stored on the event).
+    escalation_metadata
+        Optional JSON-serialisable dict persisted in
+        :attr:`WorkflowEvent.escalation_metadata`.
+    """
+    User = get_user_model()
+    system_user, _ = User.objects.get_or_create(
+        username="__system__",
+        defaults={
+            "role": "system_operator",
+            "is_active": True,
+            "is_staff": False,
+        },
+    )
+
+    occurred_at = timezone.now()
+    event = WorkflowEvent(
+        event_code=generate_workflow_event_code(occurred_at=occurred_at),
+        grievance=grievance,
+        actor=system_user,
+        transition_type=WorkflowTransitionType.ESCALATION,
+        # Keep status unchanged — escalation records the fact, not a new state.
+        previous_status=grievance.status,
+        new_status=grievance.status,
+        transition_reason=transition_reason,
+        remarks="Automatically escalated by system.",
+        escalation_metadata=dict(escalation_metadata or {}),
+        occurred_at=occurred_at,
+    )
+    event.full_clean()
+    event.save()
+    workflow_event_recorded.send(sender=WorkflowEvent, workflow_event=event)
+
+    # Lazy import — avoids circular dependency at module level.
+    from apps.audit.models import AuditActionType  # noqa: PLC0415
+    from apps.audit.services import record_system_audit_event  # noqa: PLC0415
+
+    record_system_audit_event(
+        target_model="grievances.Grievance",
+        target_object_id=str(grievance.pk),
+        action_type=AuditActionType.ESCALATION,
+        change_metadata={
+            "tracking_code": grievance.tracking_code,
+            "escalation_reason": transition_reason,
+            "source": (dict(escalation_metadata or {})).get("source", "system"),
+        },
+        remarks="System-generated escalation event persisted to workflow history.",
+    )
     return event
 
 

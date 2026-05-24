@@ -213,6 +213,20 @@ class TestDetectDepartment:
         assert detect_department("") == ""
         assert detect_department("unknown_category") == ""
 
+    def test_solid_waste_maps_to_sanitation(self):
+        """BUG 1 regression: transformer label 'solid_waste' must route to sanitation.
+
+        The Tier-1 transformer heads return 'solid_waste' for garbage/dump
+        complaints (corpus training label).  The rule engine returns
+        'waste_management'.  Both MUST route to the same department so that
+        department routing succeeds regardless of which tier wins.
+        """
+        assert detect_department("solid_waste") == "sanitation"
+
+    def test_solid_waste_and_waste_management_route_identically(self):
+        """Both labels for garbage complaints must resolve to the same department."""
+        assert detect_department("solid_waste") == detect_department("waste_management")
+
 
 # ===========================================================================
 # extract_landmarks

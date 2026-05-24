@@ -161,7 +161,12 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
 _CATEGORY_TO_DEPT: dict[str, str] = {
     "road_damage":           "roads_and_drainage",
     "drainage":              "roads_and_drainage",
+    # Both labels resolve to sanitation:
+    # "waste_management" is produced by the rule engine (keyword dict);
+    # "solid_waste" is produced by the Tier-1 transformer heads (corpus label).
+    # Keeping both ensures correct department routing regardless of which tier wins.
     "waste_management":      "sanitation",
+    "solid_waste":           "sanitation",
     "water_supply":          "water_authority",
     "street_light":          "street_lighting",
     "tree_fall":             "parks_and_environment",
@@ -1207,6 +1212,7 @@ def analyze_complaint(
         image_analysis = analyze_image(
             image_input,
             text_category=str(category_result["category_code"]),
+            text=normalized,   # pass raw text for CLIP text-image similarity
         )
 
         # Apply confidence penalties and collect review flags.

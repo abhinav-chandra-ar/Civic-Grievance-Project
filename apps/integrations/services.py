@@ -268,6 +268,11 @@ def enrich_grievance_with_ai(
     try:
         ai_decision: dict[str, Any] = payload.get("ai_decision") or {}
 
+        # Capture the priority that was on the grievance when the SLA was
+        # originally created (i.e. before enrichment mutates it).  Used
+        # below to decide whether the SLA deadline needs recomputing.
+        _priority_before_enrichment: str = str(getattr(grievance, "priority", "medium"))
+
         enrichment_values: dict[str, Any] = {
             "normalized_summary":           payload.get("normalized_summary", ""),
             "category_code":                payload.get("category_code", ""),
@@ -315,9 +320,93 @@ def enrich_grievance_with_ai(
                 _phase_e_exc,
             )
 
-        from apps.grievances.services import update_grievance_enrichment  # noqa: PLC0415
+        from apps.grievances.services import (  # noqa: PLC0415
+            DEFAULT_SLA_DEADLINE_DELTAS,
+            update_grievance_enrichment,
+        )
 
         update_grievance_enrichment(grievance=grievance, values=enrichment_values)
+
+        # ── BUG 3 fix: recalculate SLA deadlines when AI changes priority ────
+        # update_grievance_enrichment() has already written the new priority
+        # to the Grievance row.  If it differs from what the SLA was created
+        # with, recompute both deadlines so the SLA deadline matches reality.
+        # Only active (non-breached) SLAs are updated; a breached SLA must
+        # not have its deadline silently moved.
+        _enriched_priority: str = str(enrichment_values.get("priority", "medium"))
+        if _enriched_priority != _priority_before_enrichment:
+            try:
+                from apps.slas.services import update_sla_deadlines  # noqa: PLC0415
+
+                _sla = grievance.sla  # OneToOne reverse — raises if absent
+                if not _sla.is_breached:
+                    _delta = DEFAULT_SLA_DEADLINE_DELTAS.get(
+                        _enriched_priority,
+                        DEFAULT_SLA_DEADLINE_DELTAS["medium"],
+                    )
+                    _new_due_at = grievance.submitted_at + _delta
+                    update_sla_deadlines(
+                        sla=_sla,
+                        response_due_at=_new_due_at,
+                        resolution_due_at=_new_due_at,
+                        policy_snapshot_metadata={
+                            "source":             "ai_enrichment_priority_update",
+                            "original_priority":  _priority_before_enrichment,
+                            "updated_priority":   _enriched_priority,
+                        },
+                    )
+                    _logger.debug(
+                        "SLA deadlines recomputed for grievance pk=%s "
+                        "(priority %s → %s, new deadline %s)",
+                        getattr(grievance, "pk", "?"),
+                        _priority_before_enrichment,
+                        _enriched_priority,
+                        _new_due_at,
+                    )
+            except Exception as _sla_exc:  # noqa: BLE001
+                _logger.warning(
+                    "SLA priority recompute failed for grievance pk=%s: %s",
+                    getattr(grievance, "pk", "?"),
+                    _sla_exc,
+                )
+
+        # ── BUG TASK 1 fix: trigger real escalation when AI sets should_escalate ─
+        # Wrapped in its own try/except so a failure here can never block
+        # the base enrichment from returning True.
+        _should_escalate = bool(
+            (ai_decision.get("escalation") or {}).get("should_escalate", False)
+        )
+        if _should_escalate:
+            try:
+                from apps.workflows.services import escalate_grievance_from_system  # noqa: PLC0415
+
+                _escalation_reason: str = (
+                    (ai_decision.get("escalation") or {}).get("escalation_reason", "")
+                    or "AI decision engine flagged for escalation"
+                )
+                escalate_grievance_from_system(
+                    grievance=grievance,
+                    transition_reason=_escalation_reason,
+                    escalation_metadata={
+                        "source": "ai_enrichment",
+                        "automation_action": ai_decision.get("automation_action", ""),
+                        "escalation_reason": _escalation_reason,
+                        "routing_confidence": ai_decision.get("routing_confidence", 0.0),
+                        "priority": enrichment_values.get("priority", ""),
+                    },
+                )
+                _logger.debug(
+                    "AI escalation event recorded for grievance pk=%s (reason: %s)",
+                    getattr(grievance, "pk", "?"),
+                    _escalation_reason,
+                )
+            except Exception as _esc_exc:  # noqa: BLE001
+                _logger.warning(
+                    "AI escalation failed for grievance pk=%s: %s",
+                    getattr(grievance, "pk", "?"),
+                    _esc_exc,
+                )
+
         return True
 
     except Exception as exc:  # noqa: BLE001

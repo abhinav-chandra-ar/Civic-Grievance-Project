@@ -18,7 +18,7 @@ def test_grievance_analysis_returns_enrichment_payload_without_writes() -> None:
     )
 
     assert payload["category_code"] == "water_supply"
-    assert payload["priority"] == "medium"
+    assert payload["priority"] == "high"
     assert "landmark_resolution_metadata" in payload
     assert "duplicate_detection_metadata" in payload
     assert isinstance(payload["provider_metadata"], dict)

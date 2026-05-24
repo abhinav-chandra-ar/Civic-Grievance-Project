@@ -13,7 +13,12 @@
       "PowerShell(cd \"C:\\\\Users\\\\91918\\\\OneDrive\\\\Desktop\\\\Civic-Grievance-Project\\\\grievance-core\"; $pythonCmd = \\(Get-Command python -ErrorAction SilentlyContinue\\).Source; Write-Host \"Python: $pythonCmd\"; $pytestCmd = \\(Get-Command pytest -ErrorAction SilentlyContinue\\).Source; Write-Host \"pytest: $pytestCmd\")",
       "Bash(python -c \"import pytest; print\\(pytest.__version__\\)\")",
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
-      "Read(//c/Users/91918/AppData/Roaming/Python/**)"
+      "Read(//c/Users/91918/AppData/Roaming/Python/**)",
+      "PowerShell(cd \"C:\\\\Users\\\\91918\\\\OneDrive\\\\Desktop\\\\Civic-Grievance-Project\\\\grievance-core\"; $env:Path = \"$env:Path;$env:APPDATA\\\\Python\\\\Scripts;$env:LOCALAPPDATA\\\\Programs\\\\Python\\\\Python314\\\\Scripts\"; & \\(Get-Command python\\).Source -m pytest tests/test_routing_hardening.py -x -q 2>&1 | Select-Object -Last 30)",
+      "PowerShell($venvPython = Get-ChildItem \"$env:LOCALAPPDATA\\\\pypoetry\\\\Cache\\\\virtualenvs\" -Filter \"python.exe\" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName; Write-Output $venvPython)",
+      "Bash(dir)",
+      "Bash(python3 -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(npm run *)"
     ]
   }
 }

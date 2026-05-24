@@ -100,11 +100,18 @@ def classify_grievance_text(
             "duplicate_check":        result["duplicate"],
             "needs_human_review":     result["needs_human_review"],
             "review_reasons":         result["review_reasons"],
-            # Phase B image fields
+            # Phase B image fields (heuristic)
             "image_analysis":         img,
             "consistency_check":      img["is_consistent"] if img else None,
             "evidence_quality":       img["quality_score"] if img else None,
             "evidence_review_reason": evidence_review_reason,
+            # Phase B+ vision AI fields (CLIP — None when CLIP unavailable)
+            "vision_class":           img["vision_class"]        if img else None,
+            "vision_confidence":      img["vision_confidence"]   if img else None,
+            "vision_all_scores":      img["vision_all_scores"]   if img else None,
+            "consistency_verdict":    img["consistency_verdict"] if img else None,
+            "fraud_flags":            img["fraud_flags"]         if img else [],
+            "vision_provider":        img["vision_provider"]     if img else None,
             # Phase C decision intelligence
             "decision":               result["decision"],
         },

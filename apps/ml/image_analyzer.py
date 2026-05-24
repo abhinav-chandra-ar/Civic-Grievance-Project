@@ -7,10 +7,10 @@ Design constraints
 * Pure functions only — no Django imports, no database access, no side effects.
 * Requires Pillow (PIL) for pixel-level analysis.  When Pillow is not installed,
   every function returns a safe degraded response rather than raising ImportError.
-* Uses only PIL + Python stdlib (io, pathlib).  No NumPy, no OpenCV, no ML models.
-* Does NOT classify image content (pothole / garbage / drainage etc.) — that
-  requires real CV models.  Instead it validates evidence quality and flags
-  obviously junk submissions.
+* Uses PIL + Python stdlib for heuristic checks.
+* Optionally uses the CLIP vision engine (vision_inference.py) for real semantic
+  classification.  When CLIP is unavailable, all existing heuristic functions
+  continue to work as-is — zero behaviour change for callers.
 
 Image input contract
 --------------------
@@ -19,14 +19,25 @@ All public functions accept ``image_input`` which may be:
   • bytes             → raw image bytes (e.g. from an uploaded file read)
   • PIL.Image.Image   → an already-opened Pillow image object
 
-Function inventory
-------------------
+Function inventory — HEURISTIC (always available)
+--------------------------------------------------
 validate_image()                 → format / dimension sanity check
 assess_image_quality()           → blur, darkness, blank detection
 detect_irrelevant_image()        → screenshot / blank / text-heavy heuristics
-compare_text_image_consistency() → logical consistency between complaint category
-                                   and image analysis result
-analyze_image()                  → orchestrator — calls all of the above
+compare_text_image_consistency() → logical consistency (heuristic fallback)
+analyze_image()                  → orchestrator — heuristics + CLIP when available
+
+New output keys added by CLIP (None when CLIP unavailable)
+----------------------------------------------------------
+vision_class        str | None   — e.g. "road_damage", "screenshot"
+vision_confidence   float | None — 0.0–1.0 softmax probability
+vision_all_scores   dict | None  — {class: score} for all 13 classes
+consistency_verdict str          — "supports" | "contradicts" | "uncertain"
+fraud_flags         list[str]    — detected fraud signals (empty when clean)
+vision_provider     str          — "clip_vit_b32" | "heuristic"
+
+All pre-existing output keys are unchanged.  Callers that ignore the new keys
+continue to work without modification.
 """
 from __future__ import annotations
 
@@ -45,6 +56,7 @@ except ImportError:  # pragma: no cover
     _PIL_AVAILABLE = False
 
 PROVIDER = "image_rule_v1"
+VISION_PROVIDER_CLIP = "clip_vit_b32"
 
 # ---------------------------------------------------------------------------
 # Constraints
@@ -388,9 +400,48 @@ def compare_text_image_consistency(
     }
 
 
+def classify_civic_issue_from_image(image_input: Any) -> dict[str, object]:
+    """Use CLIP zero-shot classification to identify the civic issue in an image.
+
+    Returns
+    -------
+    dict with keys:
+        vision_class        — top predicted class (e.g. "road_damage") or "unknown"
+        vision_confidence   — softmax probability (0.0–1.0)
+        vision_all_scores   — dict of all class probabilities
+        mapped_category     — grievance category code or None
+        is_civic_image      — False when class is screenshot/indoor/irrelevant
+        vision_provider     — "clip_vit_b32" | "unavailable"
+
+    When CLIP is not installed or fails, all values are None / False / "unavailable".
+    """
+    try:
+        from apps.ml.vision_inference import get_clip_engine  # noqa: PLC0415
+        engine = get_clip_engine()
+        result = engine.classify_image(image_input)
+        return {
+            "vision_class":       result.predicted_class,
+            "vision_confidence":  result.confidence,
+            "vision_all_scores":  result.all_scores,
+            "mapped_category":    result.mapped_category,
+            "is_civic_image":     result.is_civic,
+            "vision_provider":    result.provider,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "vision_class":       None,
+            "vision_confidence":  None,
+            "vision_all_scores":  None,
+            "mapped_category":    None,
+            "is_civic_image":     False,
+            "vision_provider":    "unavailable",
+        }
+
+
 def analyze_image(
     image_input: Any,
     text_category: str = "",
+    text: str = "",
 ) -> dict[str, object]:
     """Orchestrate all image intelligence steps and return a unified payload.
 
@@ -401,40 +452,132 @@ def analyze_image(
     text_category
         Optional complaint category code (e.g. ``"road_damage"``) used for
         the consistency check.
+    text
+        Optional raw complaint text passed to CLIP for direct text-image
+        cosine similarity.  Ignored when CLIP is unavailable.
 
     Returns
     -------
-    dict with keys:
+    dict with keys (all pre-existing keys unchanged):
         is_valid, quality_score, quality_flags, usable,
         is_irrelevant, irrelevant_reason,
         is_consistent, consistency_score, conflict_reason,
-        provider
+        provider,
+        --- new keys (None / [] when CLIP unavailable) ---
+        vision_class, vision_confidence, vision_all_scores,
+        consistency_verdict, fraud_flags, vision_provider
     """
     if not _PIL_AVAILABLE:
-        return dict(_NOT_AVAILABLE)
+        result = dict(_NOT_AVAILABLE)
+        result.update({
+            "vision_class":       None,
+            "vision_confidence":  None,
+            "vision_all_scores":  None,
+            "consistency_verdict": "uncertain",
+            "fraud_flags":        [],
+            "vision_provider":    "unavailable",
+        })
+        return result
 
-    val_result  = validate_image(image_input)
-    qual_result = assess_image_quality(image_input)
+    val_result   = validate_image(image_input)
+    qual_result  = assess_image_quality(image_input)
     irrel_result = detect_irrelevant_image(image_input)
 
-    # Build the partial analysis dict that compare_text_image_consistency needs.
+    # ── Heuristic consistency (always runs, preserved for backward compat) ──
     partial = {
         "is_valid":          val_result["is_valid"],
         "is_irrelevant":     irrel_result["is_irrelevant"],
         "irrelevant_reason": irrel_result["reason"],
         "usable":            qual_result["usable"],
     }
-    cons_result = compare_text_image_consistency(text_category, partial)
+    heuristic_cons = compare_text_image_consistency(text_category, partial)
+
+    # ── Collect heuristic fraud signals ────────────────────────────────────
+    heuristic_fraud_flags: list[str] = []
+    if irrel_result["is_irrelevant"]:
+        reason = str(irrel_result["reason"])
+        if reason:
+            heuristic_fraud_flags.append(reason)
+
+    # ── CLIP vision intelligence (optional — graceful degradation) ─────────
+    vision_class:      str | None  = None
+    vision_confidence: float | None = None
+    vision_all_scores: dict | None  = None
+    vision_provider:   str          = "heuristic"
+    consistency_verdict: str        = "uncertain"
+    fraud_flags: list[str]          = list(heuristic_fraud_flags)
+
+    # Only attempt CLIP when the image passes basic validation
+    if val_result["is_valid"]:
+        try:
+            from apps.ml.vision_inference import get_clip_engine  # noqa: PLC0415
+            engine = get_clip_engine()
+
+            if engine.is_ready:
+                # 1. Zero-shot image classification
+                vis = engine.classify_image(image_input)
+                vision_class      = vis.predicted_class
+                vision_confidence = vis.confidence
+                vision_all_scores = vis.all_scores
+                vision_provider   = vis.provider
+
+                # 2. Text-image consistency (CLIP beats the heuristic version)
+                effective_text = text or text_category or ""
+                cons = engine.check_consistency(
+                    effective_text, image_input, expected_category=text_category
+                )
+                consistency_verdict = cons.verdict
+
+                # 3. Fraud signal detection (CLIP + carry forward heuristics)
+                fraud_res = engine.detect_fraud_signals(
+                    image_input,
+                    heuristic_flags=list(heuristic_fraud_flags),
+                )
+                fraud_flags = fraud_res.flags
+
+        except Exception as exc:  # noqa: BLE001
+            # CLIP failed — stay with heuristic results
+            vision_provider = f"heuristic (clip_error: {exc})"
+
+    # ── Resolve is_consistent / consistency_score for backward compat ──────
+    # When CLIP ran, upgrade the heuristic consistency result only if CLIP
+    # produced a clear verdict.
+    if consistency_verdict == "supports":
+        is_consistent    = True
+        consistency_score = heuristic_cons.get("consistency_score", 0.75)
+        if isinstance(consistency_score, float) and consistency_score < 0.65:
+            consistency_score = 0.75
+        conflict_reason = ""
+    elif consistency_verdict == "contradicts":
+        is_consistent    = False
+        consistency_score = 0.15
+        conflict_reason   = (
+            f"vision_contradiction: image_classified_as_{vision_class}"
+            if vision_class else heuristic_cons.get("conflict_reason", "")
+        )
+    else:
+        # "uncertain" or CLIP unavailable — fall back to heuristic verdict
+        is_consistent    = bool(heuristic_cons.get("is_consistent", False))
+        consistency_score = float(heuristic_cons.get("consistency_score", 0.0))
+        conflict_reason   = str(heuristic_cons.get("conflict_reason", ""))
 
     return {
-        "is_valid":          val_result["is_valid"],
-        "quality_score":     qual_result["quality_score"],
-        "quality_flags":     qual_result["quality_flags"],
-        "usable":            qual_result["usable"],
-        "is_irrelevant":     irrel_result["is_irrelevant"],
-        "irrelevant_reason": irrel_result["reason"],
-        "is_consistent":     cons_result["is_consistent"],
-        "consistency_score": cons_result["consistency_score"],
-        "conflict_reason":   cons_result["conflict_reason"],
-        "provider":          PROVIDER,
+        # ── Pre-existing keys (unchanged) ──────────────────────────────────
+        "is_valid":           val_result["is_valid"],
+        "quality_score":      qual_result["quality_score"],
+        "quality_flags":      qual_result["quality_flags"],
+        "usable":             qual_result["usable"],
+        "is_irrelevant":      irrel_result["is_irrelevant"],
+        "irrelevant_reason":  irrel_result["reason"],
+        "is_consistent":      is_consistent,
+        "consistency_score":  consistency_score,
+        "conflict_reason":    conflict_reason,
+        "provider":           PROVIDER,
+        # ── New CLIP-backed keys ────────────────────────────────────────────
+        "vision_class":        vision_class,
+        "vision_confidence":   vision_confidence,
+        "vision_all_scores":   vision_all_scores,
+        "consistency_verdict": consistency_verdict,
+        "fraud_flags":         fraud_flags,
+        "vision_provider":     vision_provider,
     }

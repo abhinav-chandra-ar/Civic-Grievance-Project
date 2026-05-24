@@ -60,6 +60,25 @@ class User(AbstractUser):
         validators=[validate_translation_mapping],
         help_text="Additional translated user profile values keyed by language.",
     )
+    # Assignment FKs — used for ward/department visibility scoping.
+    # Null means the officer has not yet been assigned.
+    # SET_NULL preserves the user record if the ward/department is removed.
+    assigned_ward = models.ForeignKey(
+        "wards.Ward",
+        blank=True,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_officers",
+        help_text="Ward this officer is assigned to (ward_officer role only).",
+    )
+    assigned_department = models.ForeignKey(
+        "departments.Department",
+        blank=True,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_officers",
+        help_text="Department this officer is assigned to (department_officer role only).",
+    )
 
     class Meta:
         db_table = "users_user"

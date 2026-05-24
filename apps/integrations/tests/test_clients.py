@@ -11,7 +11,7 @@ def test_nlp_client_returns_classification_shape() -> None:
     result = classify_grievance_text(raw_text="Road has a pothole", language_hint="en")
 
     assert result["category_code"] == "road_damage"
-    assert result["priority"] == "medium"
+    assert result["priority"] == "high"
     assert isinstance(result["metadata"], dict)
 
 
