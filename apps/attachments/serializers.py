@@ -5,8 +5,9 @@ from typing import Any
 
 from rest_framework import serializers
 
+from apps.grievances.models import Grievance
 from .models import Attachment
-from .services import register_attachment, update_attachment_metadata
+from .services import register_attachment, register_attachment_with_file, update_attachment_metadata
 
 
 class AttachmentSerializer(serializers.ModelSerializer[Attachment]):
@@ -54,6 +55,40 @@ class AttachmentRegisterSerializer(serializers.ModelSerializer[Attachment]):
 
     def create(self, validated_data: dict[str, Any]) -> Attachment:
         return register_attachment(**validated_data)
+
+
+class AttachmentUploadSerializer(serializers.Serializer):
+    """Accept a real multipart image upload and create a fully-analysed Attachment.
+
+    The client sends ``multipart/form-data`` with:
+
+    * ``grievance`` — integer PK of the parent grievance
+    * ``image_file`` — the raw image binary (JPEG, PNG, WEBP, …)
+    * ``attachment_metadata`` — optional JSON object (default ``{}``)
+
+    The service layer computes SHA-256, MIME type, and file size from the
+    uploaded bytes, saves the file to ``MEDIA_ROOT``, then fires the
+    ``attachment_registered`` signal which triggers CLIP analysis.
+    """
+
+    grievance = serializers.PrimaryKeyRelatedField(queryset=Grievance.objects.all())
+    image_file = serializers.ImageField(
+        allow_empty_file=False,
+        help_text="Raw image bytes — JPEG, PNG, WEBP, GIF, etc.",
+    )
+    attachment_metadata = serializers.JSONField(required=False, default=dict)
+
+    def create(self, validated_data: dict[str, Any]) -> Attachment:
+        return register_attachment_with_file(
+            uploader=validated_data["uploader"],
+            grievance=validated_data["grievance"],
+            image_file_obj=validated_data["image_file"],
+            attachment_metadata=validated_data.get("attachment_metadata", {}),
+        )
+
+    def save(self, **kwargs: Any) -> Attachment:  # type: ignore[override]
+        validated_data = {**self.validated_data, **kwargs}
+        return self.create(validated_data)
 
 
 class AttachmentMetadataSerializer(serializers.ModelSerializer[Attachment]):

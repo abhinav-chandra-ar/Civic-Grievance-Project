@@ -117,24 +117,27 @@ def escalate_grievance_from_system(
     transition_reason: str,
     escalation_metadata: Mapping[str, Any] | None = None,
 ) -> WorkflowEvent:
-    """Record a system-generated escalation event without mutating grievance status.
+    """Record a system-generated escalation alert without changing grievance status.
 
-    Creates an ESCALATION :class:`WorkflowEvent` whose ``previous_status``
-    and ``new_status`` are both the grievance's current status.  This means:
+    Escalation is an **urgency marker and municipal-admin alert**, not a
+    lifecycle state.  The grievance continues through its normal lifecycle
+    (submitted → triaged/assigned → in_progress → resolved → closed).
+    This function records the escalation fact so that:
 
-    * The grievance row is **not** touched — no status rewrite, no
-      ``status_reason``/``status_metadata`` overwrite.
-    * The email handler skips the citizen notification (previous == new).
-    * The audit log records an ``ESCALATION`` action for traceability.
+    * The audit trail shows when and why the escalation was triggered.
+    * Downstream signal handlers can notify municipal_admin.
+    * The ``WorkflowEvent.escalation_metadata`` carries the AI reasoning.
+    * ``previous_status == new_status`` so no citizen email is fired.
 
     A ``__system__`` user (role ``system_operator``) is get-or-created as the
     actor so this function can be called from automated paths (AI enrichment,
-    management commands) without a human user in context.
+    SLA breach monitors) without a human user in context.
 
     Parameters
     ----------
     grievance
         A :class:`~apps.grievances.models.Grievance` instance.
+        Its ``status`` is **not** changed.
     transition_reason
         Human-readable reason for the escalation (stored on the event).
     escalation_metadata
@@ -157,7 +160,7 @@ def escalate_grievance_from_system(
         grievance=grievance,
         actor=system_user,
         transition_type=WorkflowTransitionType.ESCALATION,
-        # Keep status unchanged — escalation records the fact, not a new state.
+        # previous_status == new_status: escalation is an alert, not a state change.
         previous_status=grievance.status,
         new_status=grievance.status,
         transition_reason=transition_reason,
@@ -182,7 +185,7 @@ def escalate_grievance_from_system(
             "escalation_reason": transition_reason,
             "source": (dict(escalation_metadata or {})).get("source", "system"),
         },
-        remarks="System-generated escalation event persisted to workflow history.",
+        remarks="System-generated escalation alert persisted to workflow history.",
     )
     return event
 

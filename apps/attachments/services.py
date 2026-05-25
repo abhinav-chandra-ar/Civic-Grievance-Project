@@ -1,6 +1,7 @@
 """Write-side services for attachments."""
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -83,6 +84,90 @@ def register_attachment(*, uploader, **values: Any) -> Attachment:
     )
     attachment.full_clean()
     attachment.save()
+    attachment_registered.send(sender=Attachment, attachment=attachment)
+    return attachment
+
+
+@transaction.atomic
+def register_attachment_with_file(
+    *,
+    uploader,
+    grievance,
+    image_file_obj: Any,
+    attachment_metadata: dict | None = None,
+) -> Attachment:
+    """Register an attachment by writing binary image bytes to local disk.
+
+    This is the **direct-upload** path.  The caller passes a Django
+    ``InMemoryUploadedFile`` (or any file-like object that has ``.read()``,
+    ``.seek()``, ``.size``, ``.name``, and ``.content_type``).  The service:
+
+    1. Computes SHA-256 from the raw bytes.
+    2. Saves the file to ``MEDIA_ROOT`` via Django's ``FileField``.
+    3. Sets ``storage_reference`` to the resulting relative path so the
+       attachment is addressable via ``MEDIA_URL``.
+    4. Fires ``attachment_registered`` — the signal handler in
+       ``receivers.py`` will read the file bytes and run CLIP analysis.
+
+    Parameters
+    ----------
+    uploader
+        The :class:`~apps.users.models.User` performing the upload.
+    grievance
+        The :class:`~apps.grievances.models.Grievance` the image belongs to.
+    image_file_obj
+        A Django ``UploadedFile`` (``InMemoryUploadedFile`` or
+        ``TemporaryUploadedFile``) received from a multipart request.
+    attachment_metadata
+        Optional caller-supplied metadata dict (default ``{}``).
+
+    Returns
+    -------
+    :class:`~apps.attachments.models.Attachment`
+        Saved instance with ``image_file`` and ``storage_reference`` set.
+    """
+    # ── 1. Read bytes to compute SHA-256 ────────────────────────────────────
+    image_file_obj.seek(0)
+    raw_bytes = image_file_obj.read()
+    sha256_hex = hashlib.sha256(raw_bytes).hexdigest()
+    image_file_obj.seek(0)
+
+    content_type: str = (
+        getattr(image_file_obj, "content_type", None)
+        or "image/jpeg"
+    ).strip().lower()
+    file_size_bytes: int = len(raw_bytes)
+    original_filename: str = (
+        getattr(image_file_obj, "name", None) or "upload"
+    ).strip() or "upload"
+
+    # ── 2. Build and save the Attachment instance ────────────────────────────
+    uploaded_at = timezone.now()
+    attachment_code = generate_attachment_code(uploaded_at=uploaded_at)
+
+    attachment = Attachment(
+        uploader=uploader,
+        grievance=grievance,
+        image_file=image_file_obj,         # FileField → Django writes to MEDIA_ROOT on .save()
+        storage_reference=original_filename,  # temporary; overwritten after save below
+        original_filename=original_filename,
+        content_type=content_type,
+        file_size_bytes=file_size_bytes,
+        content_hash=sha256_hex,
+        attachment_metadata=dict(attachment_metadata or {}),
+        uploaded_at=uploaded_at,
+        attachment_code=attachment_code,
+    )
+    # Validate all fields except storage_reference (which we'll update after save)
+    attachment.full_clean(exclude=["storage_reference"])
+    attachment.save()  # Django FileField writes bytes to MEDIA_ROOT here
+
+    # ── 3. Back-fill storage_reference with the real on-disk path ───────────
+    storage_path: str = attachment.image_file.name if attachment.image_file else original_filename
+    attachment.storage_reference = storage_path
+    attachment.save(update_fields=["storage_reference", "updated_at"])
+
+    # ── 4. Signal (triggers CLIP analysis in receivers.py) ──────────────────
     attachment_registered.send(sender=Attachment, attachment=attachment)
     return attachment
 

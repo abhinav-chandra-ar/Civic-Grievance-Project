@@ -11,4 +11,5 @@ class AttachmentsConfig(AppConfig):
     verbose_name = "Attachments"
 
     def ready(self) -> None:
-        from . import signals  # noqa: F401
+        from . import signals  # noqa: F401 — ensures Signal objects are created
+        from . import receivers  # noqa: F401 — connects @receiver decorators

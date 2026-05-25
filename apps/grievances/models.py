@@ -33,6 +33,8 @@ class GrievanceStatus(models.TextChoices):
     RESOLVED = "resolved", "Resolved"
     REJECTED = "rejected", "Rejected"
     CLOSED = "closed", "Closed"
+    # Enrichment-driven states added in workflow redesign (2026-05-25)
+    DUPLICATE_FLAGGED = "duplicate_flagged", "Duplicate flagged"
 
 
 # Ordered from least to most severe — used for priority-direction enforcement.

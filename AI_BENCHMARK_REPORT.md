@@ -22,7 +22,7 @@ including spam, near-duplicates, and ambiguous edge cases.
 These are the **production minimum bars** enforced by the pytest suite.
 Falling below any threshold fails the corresponding test.
 
-| Metric | Threshold | Notes |
+| Metric | Threshold | Notes |p
 |---|---|---|
 | Category accuracy | **≥ 72%** | Manglish and cross-language cases show genuine weakness |
 | Priority accuracy | **≥ 55%** | Priority bias-repair overfits toward "high"; real calibration gap |

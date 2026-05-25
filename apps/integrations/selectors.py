@@ -23,7 +23,7 @@ def local_landmark_candidates_for_mention(*, mention: str, limit: int = 5) -> li
 
 
 def recent_grievance_summaries_for_duplicate_context(
-    *, ward_code: str | None, limit: int = 50
+    *, ward_code: str | None, limit: int = 50, exclude_pk: int | None = None
 ) -> list[str]:
     """Return recent normalised summaries from the DB for duplicate detection.
 
@@ -39,6 +39,11 @@ def recent_grievance_summaries_for_duplicate_context(
         the duplicate check.  Pass ``None`` or ``""`` for a global sample.
     limit
         Maximum number of summaries to return (default 50).
+    exclude_pk
+        Primary key of a grievance to exclude from the pool.  Pass the PK of
+        the grievance currently being enriched so it cannot match its own
+        previously stored ``normalized_summary`` and be falsely flagged as a
+        confirmed self-duplicate on re-enrichment.
 
     Returns
     -------
@@ -51,4 +56,6 @@ def recent_grievance_summaries_for_duplicate_context(
     qs = Grievance.objects.exclude(normalized_summary="").order_by("-submitted_at")
     if ward_code:
         qs = qs.filter(ward__code=ward_code)
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
     return list(qs.values_list("normalized_summary", flat=True)[:limit])

@@ -110,6 +110,7 @@ def analyze_grievance_submission(
     language_hint: str | None = None,
     image_input: object = None,
     ward_code: str | None = None,
+    exclude_grievance_pk: int | None = None,
 ) -> dict[str, object]:
     """Return a grievance enrichment payload without mutating domain models.
 
@@ -137,11 +138,17 @@ def analyze_grievance_submission(
     ward_code
         TVMC ward code (e.g. ``"tvm_034"``).  When provided, the duplicate
         context query is scoped to the same ward, improving relevance.
+    exclude_grievance_pk
+        PK of the grievance being enriched.  Passed to the duplicate-context
+        selector so the grievance cannot match its own previously stored
+        ``normalized_summary`` and produce a false self-duplicate on
+        re-enrichment.
     """
     # ── AI block — wrapped for failure safety ───────────────────────────────
     try:
         recent_summaries = recent_grievance_summaries_for_duplicate_context(
-            ward_code=ward_code
+            ward_code=ward_code,
+            exclude_pk=exclude_grievance_pk,
         )
         nlp_result = classify_grievance_text(
             raw_text=raw_text,
@@ -256,6 +263,10 @@ def enrich_grievance_with_ai(
             citizen_location_text=getattr(grievance, "citizen_location_text", ""),
             image_input=image_input,
             ward_code=None,  # ward resolved from landmarks after enrichment
+            # Exclude this grievance's own PK from the duplicate-context pool
+            # so its previously stored normalized_summary never self-matches
+            # and triggers a false confirmed-duplicate on re-enrichment.
+            exclude_grievance_pk=getattr(grievance, "pk", None),
         )
     except Exception as exc:  # noqa: BLE001
         _logger.warning(
@@ -370,42 +381,144 @@ def enrich_grievance_with_ai(
                     _sla_exc,
                 )
 
-        # ── BUG TASK 1 fix: trigger real escalation when AI sets should_escalate ─
-        # Wrapped in its own try/except so a failure here can never block
-        # the base enrichment from returning True.
-        _should_escalate = bool(
-            (ai_decision.get("escalation") or {}).get("should_escalate", False)
-        )
-        if _should_escalate:
-            try:
-                from apps.workflows.services import escalate_grievance_from_system  # noqa: PLC0415
+        # ── Post-enrichment lifecycle dispatch ─────────────────────────────
+        # Move the grievance out of "submitted" into the correct actor queue.
+        #
+        # Lifecycle state rules (escalation is metadata, NOT a state):
+        #   reject         → REJECTED          (high-confidence spam)
+        #   dup confirmed  → DUPLICATE_FLAGGED  (confirmed duplicate)
+        #   dept resolved  → ASSIGNED           (routable — auto or escalate)
+        #   else           → TRIAGED            (uncertain; ward officer queue)
+        #
+        # If the AI also flagged escalation (should_escalate=True), record it
+        # as a separate ESCALATION WorkflowEvent AFTER the lifecycle transition.
+        # Escalation does not change status — it is an urgency alert that
+        # municipal_admin can monitor via the escalation event stream.
+        #
+        # Wrapped in its own try/except so a dispatch failure NEVER rolls
+        # back enrichment fields or prevents returning True.
+        try:
+            from django.contrib.auth import get_user_model as _get_user_model  # noqa: PLC0415
 
-                _escalation_reason: str = (
-                    (ai_decision.get("escalation") or {}).get("escalation_reason", "")
-                    or "AI decision engine flagged for escalation"
+            from apps.grievances.models import GrievanceStatus  # noqa: PLC0415
+            from apps.workflows.models import WorkflowTransitionType  # noqa: PLC0415
+            from apps.workflows.services import (  # noqa: PLC0415
+                escalate_grievance_from_system,
+                transition_grievance,
+            )
+
+            _User = _get_user_model()
+            _system_user, _ = _User.objects.get_or_create(
+                username="__system__",
+                defaults={
+                    "role": "system_operator",
+                    "is_active": True,
+                    "is_staff": False,
+                },
+            )
+
+            _automation_action: str = str(ai_decision.get("automation_action", ""))
+            _escalation_dict: dict = dict(ai_decision.get("escalation") or {})
+            _should_escalate: bool = bool(_escalation_dict.get("should_escalate", False))
+            _dup_risk: dict = dict(ai_decision.get("duplicate_risk") or {})
+            _dup_confirmed: bool = bool(_dup_risk.get("is_confirmed", False))
+            # Department resolved by Phase E (None if Phase E failed or unresolved).
+            _dept_instance = enrichment_values.get("department")
+            # The enrichment metadata dict — threaded into every transition so
+            # change_grievance_status() preserves AI fields instead of overwriting
+            # status_metadata with an empty dict.
+            _enrichment_status_metadata: dict = dict(
+                enrichment_values.get("status_metadata") or {}
+            )
+
+            # ── Step A: lifecycle status transition ──────────────────────────
+            if _automation_action == "reject":
+                # High-confidence spam — reject immediately.
+                transition_grievance(
+                    grievance=grievance,
+                    actor=_system_user,
+                    new_status=GrievanceStatus.REJECTED,
+                    transition_type=WorkflowTransitionType.STATUS_CHANGE,
+                    transition_reason="AI classified as spam or invalid content.",
+                    remarks="Post-enrichment dispatch: reject.",
+                    status_metadata=_enrichment_status_metadata,
+                )
+
+            elif _dup_confirmed:
+                # Confirmed duplicate — hold for deduplication review.
+                transition_grievance(
+                    grievance=grievance,
+                    actor=_system_user,
+                    new_status=GrievanceStatus.DUPLICATE_FLAGGED,
+                    transition_type=WorkflowTransitionType.STATUS_CHANGE,
+                    transition_reason="AI detected a confirmed duplicate submission.",
+                    remarks="Post-enrichment dispatch: duplicate_flagged.",
+                    status_metadata=_enrichment_status_metadata,
+                )
+
+            elif _dept_instance is not None:
+                # Department resolved (auto_route OR escalate with known dept)
+                # → enter the department officer queue.
+                transition_grievance(
+                    grievance=grievance,
+                    actor=_system_user,
+                    new_status=GrievanceStatus.ASSIGNED,
+                    transition_type=WorkflowTransitionType.ASSIGNMENT,
+                    transition_reason=(
+                        f"AI routed to {_dept_instance.code} "
+                        f"(confidence {ai_decision.get('routing_confidence', 0.0):.0%})."
+                    ),
+                    remarks="Post-enrichment dispatch: dept resolved → assigned.",
+                    status_metadata=_enrichment_status_metadata,
+                )
+
+            else:
+                # review_required, no department, low confidence
+                # → enter the ward-officer triage queue.
+                transition_grievance(
+                    grievance=grievance,
+                    actor=_system_user,
+                    new_status=GrievanceStatus.TRIAGED,
+                    transition_type=WorkflowTransitionType.STATUS_CHANGE,
+                    transition_reason="AI enrichment complete; awaiting human triage.",
+                    remarks="Post-enrichment dispatch: uncertain → triaged.",
+                    status_metadata=_enrichment_status_metadata,
+                )
+
+            # ── Step B: escalation alert (separate from lifecycle) ───────────
+            # Records an ESCALATION WorkflowEvent with previous_status ==
+            # new_status (the status just set above).  This does NOT change
+            # the grievance status — it only fires the municipal-admin alert.
+            if _should_escalate:
+                _esc_reason: str = (
+                    _escalation_dict.get("escalation_reason", "")
+                    or "AI decision engine flagged for escalation."
                 )
                 escalate_grievance_from_system(
                     grievance=grievance,
-                    transition_reason=_escalation_reason,
+                    transition_reason=_esc_reason,
                     escalation_metadata={
                         "source": "ai_enrichment",
-                        "automation_action": ai_decision.get("automation_action", ""),
-                        "escalation_reason": _escalation_reason,
+                        "automation_action": _automation_action,
+                        "escalation_reason": _esc_reason,
                         "routing_confidence": ai_decision.get("routing_confidence", 0.0),
                         "priority": enrichment_values.get("priority", ""),
+                        "lifecycle_status": grievance.status,
                     },
                 )
-                _logger.debug(
-                    "AI escalation event recorded for grievance pk=%s (reason: %s)",
-                    getattr(grievance, "pk", "?"),
-                    _escalation_reason,
-                )
-            except Exception as _esc_exc:  # noqa: BLE001
-                _logger.warning(
-                    "AI escalation failed for grievance pk=%s: %s",
-                    getattr(grievance, "pk", "?"),
-                    _esc_exc,
-                )
+
+            _logger.debug(
+                "Post-enrichment dispatch: pk=%s → status=%s escalation=%s",
+                getattr(grievance, "pk", "?"),
+                grievance.status,
+                _should_escalate,
+            )
+        except Exception as _dispatch_exc:  # noqa: BLE001
+            _logger.warning(
+                "Post-enrichment status dispatch failed for grievance pk=%s: %s",
+                getattr(grievance, "pk", "?"),
+                _dispatch_exc,
+            )
 
         return True
 
@@ -419,13 +532,26 @@ def enrich_grievance_with_ai(
 
 
 def analyze_attachment_image(
-    *, storage_reference: str, content_type: str, content_hash: str | None = None
+    *,
+    storage_reference: str,
+    content_type: str,
+    content_hash: str | None = None,
+    image_bytes: bytes | None = None,
+    text_category: str = "",
+    raw_text: str = "",
 ) -> dict[str, object]:
-    """Return attachment-ready image validation metadata without domain writes."""
+    """Return attachment-ready image validation metadata without domain writes.
+
+    When ``image_bytes`` is supplied, the real Pillow + CLIP pipeline runs.
+    Otherwise falls back to metadata-only validation (content_type header check).
+    """
     result = validate_grievance_image(
         storage_reference=storage_reference,
         content_type=content_type,
         content_hash=content_hash,
+        image_bytes=image_bytes,
+        text_category=text_category,
+        raw_text=raw_text,
     )
     payload = {
         "image_validation_metadata": {

@@ -21,3 +21,7 @@ CACHES = {
 # Run Celery tasks synchronously in tests
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
+
+# Serve MEDIA_ROOT files via Django's dev server in tests so that
+# the upload endpoint can be called and media paths verified.
+SERVE_MEDIA_IN_TESTS = True

@@ -1,8 +1,10 @@
 """Root URL configuration for grievance-core."""
 from __future__ import annotations
 
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
+from django.views.static import serve
 
 from grievance_core import health
 
@@ -21,3 +23,15 @@ urlpatterns = [
     # Service-to-service API consumed by other backend services
     path("api/internal/", include("api.internal.urls")),
 ]
+
+# Serve uploaded media files in development / test.
+# In production, nginx / S3 serves MEDIA_URL; this block is skipped when
+# DEBUG=False so it never leaks into production accidentally.
+if settings.DEBUG or getattr(settings, "SERVE_MEDIA_IN_TESTS", False):
+    urlpatterns += [
+        path(
+            settings.MEDIA_URL.lstrip("/") + "<path:path>",
+            serve,
+            {"document_root": settings.MEDIA_ROOT},
+        ),
+    ]

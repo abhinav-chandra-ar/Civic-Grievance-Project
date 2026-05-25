@@ -286,7 +286,7 @@ class TestAnalyzeGrievanceSubmissionDuplicateContext:
     def test_ward_code_forwarded_to_recent_summaries_selector(self, mock_nlp, mock_recent, mock_local):
         mock_nlp.return_value = _make_nlp_result()
         analyze_grievance_submission(raw_text=_RAW_TEXT, ward_code="tvm_034")
-        mock_recent.assert_called_once_with(ward_code="tvm_034")
+        mock_recent.assert_called_once_with(ward_code="tvm_034", exclude_pk=None)
 
     @patch(_P_LOCAL, return_value=[])
     @patch(_P_RECENT, return_value=[])
@@ -294,7 +294,7 @@ class TestAnalyzeGrievanceSubmissionDuplicateContext:
     def test_none_ward_code_forwarded_to_selector(self, mock_nlp, mock_recent, mock_local):
         mock_nlp.return_value = _make_nlp_result()
         analyze_grievance_submission(raw_text=_RAW_TEXT)
-        mock_recent.assert_called_once_with(ward_code=None)
+        mock_recent.assert_called_once_with(ward_code=None, exclude_pk=None)
 
     @patch(_P_LOCAL, return_value=[])
     @patch(_P_RECENT, return_value=[])

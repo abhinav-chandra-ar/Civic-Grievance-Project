@@ -67,10 +67,25 @@ class Attachment(models.Model):
         on_delete=models.PROTECT,
         related_name="uploaded_attachments",
     )
+    image_file = models.FileField(
+        upload_to="grievance_attachments/%Y/%m/%d/",
+        null=True,
+        blank=True,
+        max_length=512,
+        help_text=(
+            "Actual image binary stored via Django FileStorage.  "
+            "Populated only on direct-upload via POST /api/v1/attachments/upload/.  "
+            "External-storage registrations leave this blank."
+        ),
+    )
     storage_reference = models.CharField(
         max_length=512,
         db_index=True,
         validators=[validate_non_empty_text],
+        help_text=(
+            "Relative path within MEDIA_ROOT when image_file is populated; "
+            "external URL / object-store key otherwise."
+        ),
     )
     original_filename = models.CharField(max_length=255, validators=[validate_non_empty_text])
     content_type = models.CharField(

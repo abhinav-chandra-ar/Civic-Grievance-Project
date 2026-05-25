@@ -1,20 +1,30 @@
-"""Tests for AI-triggered escalation automation — TASK 1.
+"""Tests for AI-triggered escalation automation.
 
 Scope
 -----
 Verifies that when the AI decision engine produces ``should_escalate=True``
 the system correctly:
 
-  * creates an ESCALATION WorkflowEvent
+  * creates an ESCALATION WorkflowEvent (previous_status == new_status)
   * persists escalation_metadata on the event
   * creates an ESCALATION AuditLog entry
-  * does NOT change the grievance's operational status
-  * does NOT fire the citizen status-change email (same status)
-  * skips gracefully when ``should_escalate=False``
+  * does NOT change the grievance's lifecycle status (escalation is an alert)
+  * does NOT escalate when ``should_escalate=False``
   * get_or_creates the ``__system__`` user as the event actor
 
 escalate_grievance_from_system() is also tested directly to verify the
 contract independently of the AI pipeline.
+
+Architectural note (2026-05-25 workflow redesign)
+-------------------------------------------------
+Escalation is an **urgency alert**, not a lifecycle state.
+The grievance lifecycle is: submitted → triaged/assigned → in_progress
+  → resolved → closed.
+escalate_grievance_from_system() records an ESCALATION WorkflowEvent with
+previous_status == new_status so that:
+  * The grievance stays in its current lifecycle state.
+  * Municipal admin sees the escalation alert in the event stream.
+  * No citizen email is fired (previous == new → email handler skips it).
 """
 from __future__ import annotations
 
@@ -151,7 +161,13 @@ def test_escalate_creates_escalation_workflow_event():
 
 
 def test_escalate_does_not_change_grievance_status():
-    """Escalation must not mutate the grievance's operational status."""
+    """escalate_grievance_from_system() must NOT change the grievance's lifecycle status.
+
+    Escalation is an urgency alert.  The grievance keeps its current status
+    (triaged, assigned, etc.) and an ESCALATION event with previous==new is
+    recorded so municipal_admin can see the alert without a spurious status
+    transition confusing the officer queues.
+    """
     citizen = User.objects.create_user(username="cit_esc2", password="pass", role="citizen")
     with patch(_PATCH_NLP, return_value=_NLP_STUB_NO_ESCALATE), \
          patch(_PATCH_RECENT, return_value=[]), \
@@ -159,17 +175,23 @@ def test_escalate_does_not_change_grievance_status():
          patch(_PATCH_PHASE_E, return_value=_PHASE_E_STUB):
         grievance = submit_grievance(submitter=citizen, raw_text="Road damage.")
 
+    # After post-enrichment dispatch the status has moved out of "submitted"
+    # (typically to "triaged" when no department is resolved by Phase E).
+    grievance.refresh_from_db()
     status_before = grievance.status
 
-    escalate_grievance_from_system(
+    event = escalate_grievance_from_system(
         grievance=grievance,
         transition_reason="Escalation must not change status",
     )
 
     grievance.refresh_from_db()
     assert grievance.status == status_before, (
-        "escalate_grievance_from_system() must not change the grievance's status"
+        f"escalate_grievance_from_system() must not change lifecycle status "
+        f"(was {status_before!r}, now {grievance.status!r})"
     )
+    # The event must record the same status on both sides.
+    assert event.previous_status == event.new_status == status_before
 
 
 def test_escalate_persists_escalation_metadata_on_event():
@@ -312,22 +334,31 @@ def test_no_escalation_when_should_escalate_false():
 
 
 def test_ai_escalation_does_not_change_grievance_status():
-    """AI-triggered escalation must not overwrite the grievance status."""
+    """AI-triggered escalation records an alert event but does not overwrite status.
+
+    After enrichment the grievance is in its lifecycle state (triaged or
+    assigned).  The ESCALATION WorkflowEvent must have previous_status ==
+    new_status to confirm no spurious status transition occurred.
+    """
     citizen = User.objects.create_user(username="cit_ai_stat", password="pass", role="citizen")
     grievance = _submit_escalated(citizen)
 
-    # Enrichment sets status through the normal enrichment path;
-    # the escalation must not additionally overwrite it.
     grievance.refresh_from_db()
+    # Status must be a valid lifecycle state — not "escalated" (which is not a state).
     assert grievance.status in GrievanceStatus.values, (
         f"Unexpected status after AI escalation: {grievance.status!r}"
     )
-    # Verify the ESCALATION event's new_status == previous_status (no status change).
+    assert grievance.status != "escalated", (
+        "'escalated' is not a lifecycle state; grievance must be in triaged/assigned/etc."
+    )
+
+    # The ESCALATION event records the alert without changing status.
     event = WorkflowEvent.objects.filter(
         grievance=grievance,
         transition_type=WorkflowTransitionType.ESCALATION,
     ).first()
-    if event:
-        assert event.new_status == event.previous_status, (
-            "ESCALATION event must not change status"
-        )
+    assert event is not None, "AI escalation must produce an ESCALATION WorkflowEvent"
+    assert event.new_status == event.previous_status, (
+        "ESCALATION WorkflowEvent must have previous_status == new_status "
+        "(escalation is an alert, not a state transition)"
+    )

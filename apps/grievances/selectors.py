@@ -134,3 +134,74 @@ def grievance_list_visible_to_user(*, user: Any) -> QuerySet[Grievance]:
 def grievance_get_by_tracking_code(*, tracking_code: str) -> Grievance:
     """Return a grievance by citizen-facing tracking code with all relations."""
     return grievance_list_detail().get(tracking_code=tracking_code)
+
+
+# ---------------------------------------------------------------------------
+# Role-specific action queues
+# ---------------------------------------------------------------------------
+# These selectors return the subset of grievances that require a specific
+# actor's attention right now.  They narrow the full visibility queryset
+# by both role scope (ward/department FK) and status, so each actor's inbox
+# contains only actionable items.
+#
+# Visibility rule (full list read-access) is unchanged — use
+# grievance_list_visible_to_user() for the general list view.
+# ---------------------------------------------------------------------------
+
+
+def grievance_queue_for_ward_officer(*, user: Any) -> QuerySet[Grievance]:
+    """TRIAGED grievances in the ward officer's assigned ward.
+
+    TRIAGED = enriched complaints that the AI could not route with confidence,
+    or complaints with no department resolved.  The ward officer reviews,
+    confirms routing, and forwards to the correct department (→ ASSIGNED)
+    or rejects invalid complaints (→ REJECTED).
+    """
+    from .models import GrievanceStatus  # noqa: PLC0415
+
+    ward_id = getattr(user, "assigned_ward_id", None)
+    if ward_id is None:
+        return Grievance.objects.none()
+    return grievance_list_summary().filter(
+        ward_id=ward_id,
+        status=GrievanceStatus.TRIAGED,
+    )
+
+
+def grievance_queue_for_dept_officer(*, user: Any) -> QuerySet[Grievance]:
+    """ASSIGNED and IN_PROGRESS grievances for the department officer's department.
+
+    ASSIGNED   = newly routed to this department by AI or ward officer.
+    IN_PROGRESS = officer has accepted the work and started resolution.
+    """
+    from .models import GrievanceStatus  # noqa: PLC0415
+
+    dept_id = getattr(user, "assigned_department_id", None)
+    if dept_id is None:
+        return Grievance.objects.none()
+    return grievance_list_summary().filter(
+        department_id=dept_id,
+        status__in=[GrievanceStatus.ASSIGNED, GrievanceStatus.IN_PROGRESS],
+    )
+
+
+def grievance_escalation_alert_queue() -> QuerySet[Grievance]:
+    """Grievances that carry an AI escalation flag — municipal admin alert queue.
+
+    Escalation is NOT a lifecycle status; it is an urgency marker stored in
+    ``status_metadata.escalation.should_escalate``.  These complaints may be
+    in any active lifecycle state (typically ASSIGNED for routed emergencies,
+    or TRIAGED when the department could not be resolved).
+
+    Ordered oldest-first so the longest-waiting emergencies surface at the top.
+    """
+    return grievance_list_summary().filter(
+        status_metadata__escalation__should_escalate=True,
+    ).order_by("submitted_at")
+
+
+def grievance_duplicate_flagged_queue() -> QuerySet[Grievance]:
+    """DUPLICATE_FLAGGED grievances awaiting deduplication review by admin."""
+    from .models import GrievanceStatus  # noqa: PLC0415
+
+    return grievance_list_summary().filter(status=GrievanceStatus.DUPLICATE_FLAGGED)
