@@ -4,11 +4,12 @@ Django management command: seed_demo_data
 
 Idempotently seeds the database with realistic TVMC civic grievance demo data:
 
-    • 7 municipal departments (roads, sanitation, water, lighting, parks,
-      building permits, electrical engineering)
+    • 8 real Kerala civic agencies (KSEB, KWA, PWD, CENGG, PH, REV, TP, MADM)
     • 7 demo users  (3 citizens, 2 ward officers, 1 dept officer, 1 admin)
     • 15 demo grievances in English, Malayalam, and Manglish
     • 1 SLA record per grievance (if not already present)
+
+    Run migrate_to_kerala_agencies first if the DB has old placeholder departments.
 
 Idempotency
 -----------
@@ -36,46 +37,52 @@ from django.utils import timezone
 
 _DEPARTMENTS = [
     {
-        "code": "roads_and_drainage",
-        "name": "Roads & Drainage Department",
-        "translated_names": {"ml": "റോഡ്, ഡ്രെയിനേജ് വിഭാഗം"},
-        "handled_categories": ["road_damage", "drainage", "sewage_issue"],
+        "code": "KSEB",
+        "name": "Kerala State Electricity Board",
+        "translated_names": {"ml": "കേരള സ്റ്റേറ്റ് ഇലക്ട്രിസിറ്റി ബോർഡ്"},
+        "handled_categories": ["electrical_hazard", "street_light"],
     },
     {
-        "code": "sanitation",
-        "name": "Sanitation Department",
-        "translated_names": {"ml": "ശുചിത്വ വിഭാഗം"},
+        "code": "KWA",
+        "name": "Kerala Water Authority",
+        "translated_names": {"ml": "കേരള ജല അതോറിറ്റി"},
+        "handled_categories": ["water_supply", "sewage_issue"],
+    },
+    {
+        "code": "PWD",
+        "name": "Kerala Public Works Department",
+        "translated_names": {"ml": "കേരള പൊതുമരാമത്ത് വകുപ്പ്"},
+        "handled_categories": [],
+    },
+    {
+        "code": "CENGG",
+        "name": "Corporation Engineering Department",
+        "translated_names": {"ml": "കോർപ്പറേഷൻ എഞ്ചിനീയറിംഗ് വിഭാഗം"},
+        "handled_categories": ["road_damage", "drainage", "tree_fall"],
+    },
+    {
+        "code": "PH",
+        "name": "Public Health / Sanitation Department",
+        "translated_names": {"ml": "പൊതു ആരോഗ്യ / ശുചിത്വ വിഭാഗം"},
         "handled_categories": ["waste_management", "solid_waste"],
     },
     {
-        "code": "water_authority",
-        "name": "Water Authority",
-        "translated_names": {"ml": "ജല അതോറിറ്റി"},
-        "handled_categories": ["water_supply"],
+        "code": "REV",
+        "name": "Revenue Department",
+        "translated_names": {"ml": "റവന്യൂ വകുപ്പ്"},
+        "handled_categories": [],
     },
     {
-        "code": "street_lighting",
-        "name": "Street Lighting Department",
-        "translated_names": {"ml": "തെരുവ് വിളക്ക് വിഭാഗം"},
-        "handled_categories": ["street_light"],
-    },
-    {
-        "code": "parks_and_environment",
-        "name": "Parks & Environment Department",
-        "translated_names": {"ml": "പാർക്ക്, പരിസ്ഥിതി വിഭാഗം"},
-        "handled_categories": ["tree_fall"],
-    },
-    {
-        "code": "building_permit_office",
-        "name": "Building Permit Office",
-        "translated_names": {"ml": "കെട്ടിട അനുമതി ഓഫീസ്"},
+        "code": "TP",
+        "name": "Town Planning Department",
+        "translated_names": {"ml": "ടൗൺ പ്ലാനിംഗ് വകുപ്പ്"},
         "handled_categories": ["illegal_construction"],
     },
     {
-        "code": "electrical_engineering",
-        "name": "Electrical Engineering Department",
-        "translated_names": {"ml": "ഇലക്ട്രിക്കൽ എഞ്ചിനീയറിംഗ് വിഭാഗം"},
-        "handled_categories": ["electrical_hazard"],
+        "code": "MADM",
+        "name": "Municipal Administration",
+        "translated_names": {"ml": "മുനിസിപ്പൽ ഭരണം"},
+        "handled_categories": [],
     },
 ]
 
@@ -163,7 +170,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "assigned",
         "category_code": "road_damage",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900002",
@@ -175,7 +182,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "in_progress",
         "category_code": "water_supply",
-        "dept_code": "water_authority",
+        "dept_code": "KWA",
     },
     {
         "tracking_code": "GRV-2024-900003",
@@ -187,7 +194,7 @@ _GRIEVANCES = [
         "priority": "medium",
         "status": "triaged",
         "category_code": "street_light",
-        "dept_code": "street_lighting",
+        "dept_code": "KSEB",
     },
     {
         "tracking_code": "GRV-2024-900004",
@@ -199,7 +206,7 @@ _GRIEVANCES = [
         "priority": "urgent",
         "status": "in_progress",
         "category_code": "tree_fall",
-        "dept_code": "parks_and_environment",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900005",
@@ -211,7 +218,7 @@ _GRIEVANCES = [
         "priority": "critical",
         "status": "assigned",
         "category_code": "electrical_hazard",
-        "dept_code": "electrical_engineering",
+        "dept_code": "KSEB",
     },
     {
         "tracking_code": "GRV-2024-900006",
@@ -223,7 +230,7 @@ _GRIEVANCES = [
         "priority": "urgent",
         "status": "triaged",
         "category_code": "sewage_issue",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900007",
@@ -235,7 +242,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "submitted",
         "category_code": "drainage",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900008",
@@ -247,7 +254,7 @@ _GRIEVANCES = [
         "priority": "medium",
         "status": "submitted",
         "category_code": "illegal_construction",
-        "dept_code": "building_permit_office",
+        "dept_code": "TP",
     },
     # ── Malayalam ────────────────────────────────────────────────────────────
     {
@@ -260,7 +267,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "triaged",
         "category_code": "road_damage",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900010",
@@ -272,7 +279,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "submitted",
         "category_code": "water_supply",
-        "dept_code": "water_authority",
+        "dept_code": "KWA",
     },
     {
         "tracking_code": "GRV-2024-900011",
@@ -284,7 +291,7 @@ _GRIEVANCES = [
         "priority": "urgent",
         "status": "submitted",
         "category_code": "sewage_issue",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900012",
@@ -296,7 +303,7 @@ _GRIEVANCES = [
         "priority": "medium",
         "status": "triaged",
         "category_code": "street_light",
-        "dept_code": "street_lighting",
+        "dept_code": "KSEB",
     },
     # ── Manglish ─────────────────────────────────────────────────────────────
     {
@@ -309,7 +316,7 @@ _GRIEVANCES = [
         "priority": "high",
         "status": "submitted",
         "category_code": "road_damage",
-        "dept_code": "roads_and_drainage",
+        "dept_code": "CENGG",
     },
     {
         "tracking_code": "GRV-2024-900014",
@@ -321,7 +328,7 @@ _GRIEVANCES = [
         "priority": "medium",
         "status": "submitted",
         "category_code": "street_light",
-        "dept_code": "street_lighting",
+        "dept_code": "KSEB",
     },
     # ── Resolved / Closed (history demo) ────────────────────────────────────
     {
@@ -334,7 +341,7 @@ _GRIEVANCES = [
         "priority": "medium",
         "status": "resolved",
         "category_code": "waste_management",
-        "dept_code": "sanitation",
+        "dept_code": "PH",
     },
 ]
 
@@ -351,8 +358,9 @@ _SLA_HOURS_CRITICAL = 12
 
 class Command(BaseCommand):
     help = (
-        "Idempotently seed the database with demo departments, users, grievances, "
-        "and SLA records for development and demonstration purposes."
+        "Idempotently seed the database with real Kerala civic agency departments, "
+        "demo users, grievances, and SLA records for development and demonstration purposes. "
+        "Run migrate_to_kerala_agencies first if old placeholder departments exist."
     )
 
     def add_arguments(self, parser) -> None:

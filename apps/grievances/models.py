@@ -35,6 +35,16 @@ class GrievanceStatus(models.TextChoices):
     CLOSED = "closed", "Closed"
 
 
+# Ordered from least to most severe — used for priority-direction enforcement.
+PRIORITY_SEVERITY_ORDER: tuple[str, ...] = (
+    GrievancePriority.LOW,
+    GrievancePriority.MEDIUM,
+    GrievancePriority.HIGH,
+    GrievancePriority.URGENT,
+    GrievancePriority.CRITICAL,
+)
+
+
 def validate_non_empty_text(value: str) -> None:
     """Reject citizen input that contains only whitespace."""
     if not value.strip():
@@ -176,6 +186,7 @@ __all__ = [
     "Grievance",
     "GrievancePriority",
     "GrievanceStatus",
+    "PRIORITY_SEVERITY_ORDER",
     "validate_metadata_mapping",
     "validate_non_empty_text",
 ]

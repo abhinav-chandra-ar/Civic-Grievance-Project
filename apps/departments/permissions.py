@@ -8,7 +8,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 from rest_framework.views import APIView
 
-DEPARTMENT_MANAGER_ROLES = frozenset({"municipal_admin", "super_admin", "system_operator"})
+# Department management is city operations — super_admin does not own department config.
+DEPARTMENT_MANAGER_ROLES = frozenset({"municipal_admin", "system_operator"})
 
 
 def user_has_department_role(user: Any, roles: Iterable[str]) -> bool:

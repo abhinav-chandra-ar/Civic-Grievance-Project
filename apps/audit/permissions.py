@@ -8,7 +8,8 @@ from rest_framework.permissions import BasePermission, SAFE_METHODS
 from rest_framework.request import Request
 from rest_framework.views import APIView
 
-AUDIT_READER_ROLES = frozenset({"municipal_admin", "super_admin", "system_operator"})
+# Audit logs are system governance data — municipal_admin does not have access.
+AUDIT_READER_ROLES = frozenset({"super_admin", "system_operator"})
 
 
 def user_has_audit_role(user: Any, roles: Iterable[str]) -> bool:

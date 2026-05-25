@@ -21,6 +21,7 @@ def test_workflow_transition_types_are_closed() -> None:
         "rejection",
         "closure",
         "comment",
+        "return",
     }
 
 

@@ -40,8 +40,17 @@ def test_phone_number_accepts_e164_and_profile_translations() -> None:
 
 
 def test_role_helpers_expose_role_access_hooks() -> None:
-    user = User(username="admin", role=UserRole.MUNICIPAL_ADMIN)
+    municipal = User(username="admin", role=UserRole.MUNICIPAL_ADMIN)
 
-    assert user.is_municipal_admin
-    assert user.is_platform_admin
-    assert not user.is_citizen
+    assert municipal.is_municipal_admin
+    assert municipal.is_governance_admin   # city operations authority
+    assert not municipal.is_platform_admin  # platform/IT authority is super_admin only
+    assert not municipal.is_citizen
+
+
+def test_platform_admin_is_super_admin_only() -> None:
+    super_adm = User(username="sysadmin", role=UserRole.SUPER_ADMIN)
+
+    assert super_adm.is_platform_admin
+    assert not super_adm.is_governance_admin
+    assert not super_adm.is_municipal_admin

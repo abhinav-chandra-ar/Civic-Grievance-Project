@@ -21,6 +21,14 @@ def test_landmark_manager_permission_accepts_super_admin() -> None:
     assert IsLandmarkManagerRole().has_permission(request, view=None)
 
 
+def test_landmark_manager_permission_rejects_municipal_admin() -> None:
+    # Landmark/GIS data management belongs to super_admin, not city operations.
+    request = APIRequestFactory().post("/landmarks/")
+    request.user = UserStub(role="municipal_admin")
+
+    assert not IsLandmarkManagerRole().has_permission(request, view=None)
+
+
 def test_landmark_manager_permission_rejects_field_verifier() -> None:
     request = APIRequestFactory().post("/landmarks/")
     request.user = UserStub(role="field_verifier")

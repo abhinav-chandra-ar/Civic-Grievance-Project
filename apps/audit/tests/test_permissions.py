@@ -28,6 +28,14 @@ def test_audit_reader_permission_rejects_post_even_for_admin() -> None:
     assert not IsAuditReaderRole().has_permission(request, view=None)
 
 
+def test_audit_reader_permission_rejects_municipal_admin() -> None:
+    # Audit logs are system governance — municipal_admin is city operations only.
+    request = APIRequestFactory().get("/audit/")
+    request.user = UserStub(role="municipal_admin")
+
+    assert not IsAuditReaderRole().has_permission(request, view=None)
+
+
 def test_audit_reader_permission_rejects_citizen() -> None:
     request = APIRequestFactory().get("/audit/")
     request.user = UserStub(role="citizen")

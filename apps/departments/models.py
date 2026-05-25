@@ -9,9 +9,11 @@ from django.core.validators import RegexValidator
 from django.db import models
 
 CATEGORY_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+# Department codes use standard abbreviations for Kerala civic agencies (e.g. KSEB, KWA, PWD).
+# Allow mixed-case alphanumeric codes with optional underscores.
 DEPARTMENT_CODE_VALIDATOR = RegexValidator(
-    regex=r"^[a-z][a-z0-9_]*$",
-    message="Use a lowercase department code containing letters, numbers, and underscores.",
+    regex=r"^[A-Za-z][A-Za-z0-9_]*$",
+    message="Use an alphanumeric department code (e.g. KSEB, KWA, CENGG). Letters, numbers, underscores only.",
 )
 
 

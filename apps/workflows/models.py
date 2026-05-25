@@ -23,6 +23,9 @@ class WorkflowTransitionType(models.TextChoices):
     REJECTION = "rejection", "Rejection"
     CLOSURE = "closure", "Closure"
     COMMENT = "comment", "Comment"
+    # RETURN: complaint is valid but wrongly routed; sends back to TRIAGED for
+    # municipal_admin re-routing. Not the same as REJECTION (complaint stays open).
+    RETURN = "return", "Return to intake"
 
 
 def validate_metadata_mapping(value: object) -> None:
@@ -117,3 +120,4 @@ class WorkflowEvent(models.Model):
 
 
 __all__ = ["WorkflowEvent", "WorkflowTransitionType", "validate_metadata_mapping"]
+

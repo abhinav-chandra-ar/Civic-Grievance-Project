@@ -107,6 +107,8 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "water supply", "pipe burst", "water leak", "no water",
         "water shortage", "pipe broken", "tap water", "drinking water",
         "water contamination", "muddy water", "water cut",
+        "water pipe", "pipe leaking", "pipe leak", "water not coming",
+        "no water supply", "water supply disrupted",
         "vellam varunilla", "vellam illa", "vellam chori", "pipe pottannu",
         "vellam mudangi", "vellam malinambaayi",
         "വെള്ളം", "പൈപ്പ്", "ജലം", "കുടിവെള്ളം",
@@ -120,6 +122,7 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "drainage": (
         "drainage", "drain blocked", "drain overflow", "clogged drain",
+        "drain blockage", "blocked drainage", "drain choked", "drain not flowing",
         "waterlogging", "water stagnation", "flooded street", "blocked drain",
         "kazhivu thilayunnu", "kazhivu block", "vellam nikkunnu",
         "thada undu", "kazhivu nikki",
@@ -138,11 +141,22 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "അനധികൃത നിർമ്മാണം", "കൈയ്യേറ്റം",
     ),
     "electrical_hazard": (
+        # English — wires and shock
         "electric wire", "live wire", "fallen wire", "electric shock",
         "exposed wire", "transformer fault", "high voltage", "sparking wire",
         "electric hazard", "current leakage",
-        "live wire und", "kambhi veennu", "current pidikunnu",
+        # English — pole / post variants (primary gap fixed)
+        "electric pole", "electric post", "broken pole", "fallen pole",
+        "pole fell", "pole fallen", "power line", "power cable",
+        "high tension wire", "overhead wire",
+        # English — sparks (standalone, not just "sparking wire")
+        "sparks", "sparking", "current leaking", "current flowing",
+        # Manglish — pole and wire
+        "live wire und", "kambhi veennu", "kambhi veenu", "current pidikunnu",
         "shock adikkunnu", "transformer kalikkunnu", "high tension kambhi",
+        "pole thakarnnu", "kambhi thakarnnu", "current chori",
+        "pole kalikkunnu", "kambhi kalikkunnu",
+        # Malayalam Unicode
         "വൈദ്യുത", "കമ്പി", "ഷോക്ക്",
     ),
     "sewage_issue": (
@@ -159,21 +173,42 @@ _ISSUE_KEYWORDS: dict[str, tuple[str, ...]] = {
 # ---------------------------------------------------------------------------
 
 _CATEGORY_TO_DEPT: dict[str, str] = {
-    "road_damage":           "roads_and_drainage",
-    "drainage":              "roads_and_drainage",
-    # Both labels resolve to sanitation:
+    # Maps civic category codes → real Kerala civic agency codes in the live DB.
+    # Agencies confirmed (2026-05-25):
+    #   KSEB  = Kerala State Electricity Board
+    #   KWA   = Kerala Water Authority
+    #   PWD   = Kerala Public Works Department (state/national highways — keyword override)
+    #   CENGG = Corporation Engineering Department (local roads, drains, civic works)
+    #   PH    = Public Health / Sanitation Department
+    #   TP    = Town Planning Department
+    #   MADM  = Municipal Administration
+    # NOTE: street_light → KSEB because KSEB operates public street lighting in Kerala.
+    # NOTE: sewage_issue → KWA because KWA manages public sewerage infrastructure.
+    # NOTE: road_damage defaults to CENGG (local roads); see state-road override below.
+    "electrical_hazard":    "KSEB",
+    "street_light":         "KSEB",
+    "water_supply":         "KWA",
+    "sewage_issue":         "KWA",
+    "road_damage":          "CENGG",   # default; overridden to PWD for state roads
+    "drainage":             "CENGG",
+    "tree_fall":            "CENGG",
+    # Both labels route to Public Health:
     # "waste_management" is produced by the rule engine (keyword dict);
     # "solid_waste" is produced by the Tier-1 transformer heads (corpus label).
-    # Keeping both ensures correct department routing regardless of which tier wins.
-    "waste_management":      "sanitation",
-    "solid_waste":           "sanitation",
-    "water_supply":          "water_authority",
-    "street_light":          "street_lighting",
-    "tree_fall":             "parks_and_environment",
-    "illegal_construction":  "building_permit_office",
-    "electrical_hazard":     "electrical_engineering",
-    "sewage_issue":          "sanitation",
+    "waste_management":     "PH",
+    "solid_waste":          "PH",
+    "illegal_construction": "TP",
 }
+
+# State / national road keywords — if a road_damage complaint mentions any of
+# these, routing is overridden to PWD (Kerala Public Works Department) instead
+# of CENGG (Corporation Engineering for local ward roads).
+_STATE_ROAD_KEYWORDS: tuple[str, ...] = (
+    "national highway", "state highway",
+    "nh ", "nh-", "sh ", "sh-",
+    "nh47", "nh66", "nh183", "nh544",
+    "bypass road", "four lane", "highway",
+)
 
 # ---------------------------------------------------------------------------
 # Priority signal phrases (checked in order: urgent → high → low → category)
@@ -181,9 +216,14 @@ _CATEGORY_TO_DEPT: dict[str, str] = {
 
 _PRIORITY_URGENT: tuple[str, ...] = (
     "fallen wire", "fallen electric wire", "live wire",
-    "live current", "kambhi veennu", "high tension wire",
+    "live current", "kambhi veennu", "kambhi veenu", "high tension wire",
     "electric shock", "electrocution", "current pidikunnu",
     "transformer blast", "transformer fire", "sparking wire",
+    # Expanded electrical-pole signals (previously missing → priority stuck at "medium")
+    "electric pole", "electric post", "broken pole", "fallen pole",
+    "pole fell", "power line", "power cable",
+    "sparks", "sparking", "current leaking",
+    "pole thakarnnu", "kambhi thakarnnu", "current chori",
     "tree fallen blocking", "tree blocking road", "maram thadangi road",
     "flash flood", "flooding road", "contamination",
     "sewage overflow school", "sewage overflow hospital",
@@ -1239,6 +1279,13 @@ def analyze_complaint(
                 dept_code = dept_pred.label
         except Exception:  # noqa: BLE001
             pass
+
+    # State-road override: road_damage on a national/state highway → PWD
+    # (Corporation Engineering only handles local municipal roads.)
+    if str(category_result.get("category_code", "")) == "road_damage" and dept_code == "CENGG":
+        lowered_text = normalized.lower()
+        if any(kw in lowered_text for kw in _STATE_ROAD_KEYWORDS):
+            dept_code = "PWD"
 
     # ── Phase 6: landmarks (rule-based + transformer hybrid) ─────────────
     landmark_result = extract_landmarks(text)

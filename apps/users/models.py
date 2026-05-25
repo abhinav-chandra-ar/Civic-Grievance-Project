@@ -119,5 +119,17 @@ class User(AbstractUser):
         return self.has_role(UserRole.MUNICIPAL_ADMIN)
 
     @property
+    def is_governance_admin(self) -> bool:
+        """True for municipal_admin — city operations authority."""
+        return self.has_role(UserRole.MUNICIPAL_ADMIN)
+
+    @property
     def is_platform_admin(self) -> bool:
-        return self.has_role(UserRole.MUNICIPAL_ADMIN, UserRole.SUPER_ADMIN)
+        """True for super_admin only — technical platform authority.
+
+        Formerly also returned True for municipal_admin. That conflation
+        has been removed: governance authority (municipal_admin) and
+        platform/IT authority (super_admin) are distinct roles.
+        Use is_governance_admin for municipal_admin checks.
+        """
+        return self.has_role(UserRole.SUPER_ADMIN)

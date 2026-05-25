@@ -10,7 +10,9 @@ from rest_framework.views import APIView
 
 from .models import User, UserRole
 
+# Both admin tiers share read access to the user directory.
 ADMIN_ROLES = frozenset({UserRole.MUNICIPAL_ADMIN, UserRole.SUPER_ADMIN})
+
 OFFICER_ROLES = frozenset(
     {
         UserRole.WARD_OFFICER,
@@ -38,9 +40,21 @@ class HasUserRole(BasePermission):
 
 
 class IsUserAdminRole(HasUserRole):
-    """Allow municipal and platform-level administrators."""
+    """Allow both admin tiers to read the user directory."""
 
     allowed_roles = ADMIN_ROLES
+
+
+class IsSuperAdminOnly(HasUserRole):
+    """Restrict to super_admin — system governance, audit, security, ML controls."""
+
+    allowed_roles = frozenset({UserRole.SUPER_ADMIN})
+
+
+class IsMunicipalAdminOnly(HasUserRole):
+    """Restrict to municipal_admin — city operations, grievance management, dept oversight."""
+
+    allowed_roles = frozenset({UserRole.MUNICIPAL_ADMIN})
 
 
 class IsOfficerRole(HasUserRole):

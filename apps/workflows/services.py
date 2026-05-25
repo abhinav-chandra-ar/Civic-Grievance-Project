@@ -188,6 +188,68 @@ def escalate_grievance_from_system(
 
 
 @transaction.atomic
+def return_grievance_to_intake(
+    *,
+    grievance,
+    actor,
+    transition_reason: str,
+    remarks: str = "",
+) -> WorkflowEvent:
+    """Return a wrongly-routed complaint to TRIAGED status for re-routing.
+
+    Governance rule: a department_officer who receives a complaint that does
+    not belong to their department may not reroute it directly.  They use this
+    action to send it back to the TRIAGED state so that municipal_admin can
+    re-assign it to the correct department.
+
+    Side effects
+    ------------
+    * ``grievance.department`` is cleared (set to NULL) — the complaint is
+      explicitly unassigned so municipal_admin can see it needs re-routing.
+    * ``grievance.status`` moves to TRIAGED.
+    * A ``RETURN`` workflow event is recorded with the supplied reason.
+
+    This is NOT rejection — the complaint remains open and visible.
+    """
+    from apps.grievances.models import GrievanceStatus
+    from apps.grievances.services import change_grievance_status
+
+    previous_status = grievance.status
+
+    # Clear department assignment so the complaint is visibly unrouted.
+    grievance.department = None
+    from django.utils import timezone as _tz
+    grievance.save(update_fields=["department", "updated_at"])
+
+    change_grievance_status(
+        grievance=grievance,
+        status=GrievanceStatus.TRIAGED,
+        reason=transition_reason,
+        metadata={
+            "return_reason": transition_reason,
+            "returned_by_role": getattr(actor, "role", "unknown"),
+        },
+    )
+
+    occurred_at = _tz.now()
+    event = WorkflowEvent(
+        event_code=generate_workflow_event_code(occurred_at=occurred_at),
+        grievance=grievance,
+        actor=actor,
+        transition_type=WorkflowTransitionType.RETURN,
+        previous_status=previous_status,
+        new_status=GrievanceStatus.TRIAGED,
+        transition_reason=transition_reason,
+        remarks=remarks,
+        occurred_at=occurred_at,
+    )
+    event.full_clean()
+    event.save()
+    workflow_event_recorded.send(sender=WorkflowEvent, workflow_event=event)
+    return event
+
+
+@transaction.atomic
 def record_workflow_comment(
     *,
     grievance,
