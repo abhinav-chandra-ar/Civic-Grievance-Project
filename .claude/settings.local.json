@@ -186,7 +186,9 @@
       "Bash(python -m pytest tests/test_escalation_automation.py tests/test_dispatch_validation.py tests/integrations/test_ai_workflow_integration.py -v)",
       "Bash(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_escalation_automation.py tests/test_dispatch_validation.py tests/integrations/test_ai_workflow_integration.py -v)",
       "Bash(/c/Users/91918/AppData/Local/pypoetry/Cache/virtualenvs/grievance-core-kEqXeBy1-py3.14/Scripts/python.exe -m pytest tests/test_escalation_automation.py tests/test_dispatch_validation.py tests/integrations/test_ai_workflow_integration.py -v)",
-      "Bash(/c/Users/91918/AppData/Local/pypoetry/Cache/virtualenvs/grievance-core-kEqXeBy1-py3.14/Scripts/python.exe -m pytest tests/test_image_upload_e2e.py -v --tb=short)"
+      "Bash(/c/Users/91918/AppData/Local/pypoetry/Cache/virtualenvs/grievance-core-kEqXeBy1-py3.14/Scripts/python.exe -m pytest tests/test_image_upload_e2e.py -v --tb=short)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(/c/Users/91918/AppData/Local/pypoetry/Cache/virtualenvs/grievance-core-kEqXeBy1-py3.14/Scripts/python.exe -m pytest tests/test_image_upload_e2e.py -v --tb=short -q)"
     ]
   }
 }
