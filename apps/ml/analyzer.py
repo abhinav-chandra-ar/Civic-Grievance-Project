@@ -506,6 +506,82 @@ _LANDMARK_ALIASES: dict[str, tuple[str, str]] = {
     "ഗ്രീൻ ഫീൽഡ്":             ("Greenfield Stadium",          "tvm_001"),
     "ഗ്രീൻഫീൽഡ് സ്റ്റേഡിയം":  ("Greenfield Stadium",          "tvm_001"),
     "ഗ്രൗണ്ട്":                ("Greenfield Stadium",          "tvm_001"),
+
+    # ── Abbreviation expansions (Fix 4 — benchmark-driven, 2026-05-25) ──────
+    # Common TVM shorthand used in complaints: jn→junction, clg→college,
+    # hosp→hospital, plus misspellings that don't match existing canonical keys.
+
+    # Palayam variants
+    "palaym":                  ("Palayam",                     "tvm_039"),
+    "palaym market":           ("Palayam Market",              "tvm_039"),
+    "palaym jn":               ("Palayam Junction",            "tvm_039"),
+    "palayam jn":              ("Palayam Junction",            "tvm_039"),
+    "palayam junction":        ("Palayam Junction",            "tvm_039"),
+
+    # Bakery Junction (famous junction near Palayam, same ward)
+    "bakery junction":         ("Bakery Junction",             "tvm_039"),
+    "bakery jn":               ("Bakery Junction",             "tvm_039"),
+    "bakery jct":              ("Bakery Junction",             "tvm_039"),
+
+    # Medical College abbreviations
+    "med clg":                 ("Medical College Hospital",    "tvm_033"),
+    "med clg junction":        ("Medical College Junction",    "tvm_033"),
+    "medical clg":             ("Medical College Hospital",    "tvm_033"),
+    "medical college jn":      ("Medical College Junction",    "tvm_033"),
+    "medical college junction":("Medical College Junction",    "tvm_033"),
+
+    # Kazhakkoottam misspellings
+    "kazhakootam":             ("Kazhakkoottam",               "tvm_001"),
+    "kazhakoottam":            ("Kazhakkoottam",               "tvm_001"),
+    "kazhakkotam":             ("Kazhakkoottam",               "tvm_001"),
+    "kazhakootam jn":          ("Kazhakkoottam Junction",      "tvm_001"),
+    "kazhakkoottam jn":        ("Kazhakkoottam Junction",      "tvm_001"),
+    "kazhakkoottam junction":  ("Kazhakkoottam Junction",      "tvm_001"),
+
+    # Kowdiar misspellings
+    "kowdiyar":                ("Kowdiar",                     "tvm_025"),
+    "kowdiyar palace":         ("Kowdiar Palace",              "tvm_025"),
+    "kowdiar palace":          ("Kowdiar Palace",              "tvm_025"),
+
+    # Nanthancode / Nanthancode misspellings
+    "nanthankode":             ("Nanthancode",                 "tvm_038"),
+    "nanthankode junction":    ("Nanthancode Junction",        "tvm_038"),
+    "nanthancode junction":    ("Nanthancode Junction",        "tvm_038"),
+    "nanthancode jn":          ("Nanthancode Junction",        "tvm_038"),
+
+    # Thampanoor misspellings
+    "thampanur":               ("Thampanoor",                  "tvm_085"),
+    "thampanur jn":            ("Thampanoor Junction",         "tvm_085"),
+    "thampanoor jn":           ("Thampanoor Junction",         "tvm_085"),
+    "thampanoor junction":     ("Thampanoor Junction",         "tvm_085"),
+
+    # Secretariat abbreviations
+    "secretariat jn":          ("Secretariat Junction",        "tvm_039"),
+    "secretariat junction":    ("Secretariat Junction",        "tvm_039"),
+
+    # Kariavattom misspellings
+    "kariavattam":             ("Kariavattom",                 "tvm_009"),
+    "kariavattam university":  ("Kerala University Kariavattom", "tvm_009"),
+
+    # Pattom abbreviations
+    "pattom jn":               ("Pattom Junction",             "tvm_034"),
+    "pattom junction":         ("Pattom Junction",             "tvm_034"),
+
+    # Trivandrum spelling variants (already has "trivandrum" but add common combos)
+    "trivandrum central station": ("Thiruvananthapuram Central", "tvm_085"),
+    "trivandrum railway station": ("Thiruvananthapuram Central", "tvm_085"),
+
+    # Kesavadasapuram abbreviations
+    "kesavadasapuram jn":      ("Kesavadasapuram Junction",    "tvm_035"),
+    "kesavadasapuram junction":("Kesavadasapuram Junction",    "tvm_035"),
+
+    # Ulloor abbreviations
+    "ulloor jn":               ("Ulloor Junction",             "tvm_032"),
+    "ulloor junction":         ("Ulloor Junction",             "tvm_032"),
+
+    # Ambalamukku abbreviations
+    "ambalamukku jn":          ("Ambalamukku Junction",        "tvm_015"),
+    "ambalamukku junction":    ("Ambalamukku Junction",        "tvm_015"),
 }
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1211,20 @@ def analyze_complaint(
     ml_cat_res   = _try_ml_category(text)
     rule_cat_res = classify_issue(text)
     fused_cat    = _fuse_category(rule_cat_res, ml_cat_res)
+    # Normalise alternative/legacy category codes → canonical system codes.
+    # Some real training datasets (BBMP) use different label conventions.
+    _CAT_ALIASES: dict[str, str] = {
+        "waste_management":    "solid_waste",   # BBMP → TVMC canonical
+        "tree_hazard":         "tree_fall",      # v4 corpus bug → canonical
+        "garbage":             "solid_waste",
+        "water":               "water_supply",
+        "sewage":              "sewage_issue",
+        "electrical":          "electrical_hazard",
+        "road":                "road_damage",
+    }
+    raw_cat = str(fused_cat.get("category_code", ""))
+    if raw_cat in _CAT_ALIASES:
+        fused_cat = {**fused_cat, "category_code": _CAT_ALIASES[raw_cat]}
     category_result  = fused_cat
     inference_source = str(fused_cat.get("source", "rule"))
 
@@ -1172,6 +1262,29 @@ def analyze_complaint(
         priority = ml_priority
     else:
         priority = predict_priority(text, str(category_result["category_code"]))
+
+    # Apply per-category minimum priority floors so that Manglish/Malayalam
+    # texts never fall below the category-appropriate baseline.  This prevents
+    # cross-language priority disparity caused by missing English signal
+    # phrases in the rule engine and low-confidence ML priority predictions.
+    # Floors only RAISE priority — they never lower an already-high result.
+    _PRIORITY_FLOOR: dict[str, str] = {
+        "road_damage":       "medium",
+        "water_supply":      "medium",
+        "sewage_issue":      "high",
+        "drainage":          "medium",
+        "electrical_hazard": "urgent",
+        "tree_fall":         "high",
+        "solid_waste":       "medium",
+        "street_light":      "medium",
+    }
+    _PRIORITY_LEVEL: dict[str, int] = {
+        "low": 0, "medium": 1, "high": 2, "urgent": 3, "critical": 4,
+    }
+    _cat_code_for_floor = str(category_result.get("category_code", ""))
+    _floor = _PRIORITY_FLOOR.get(_cat_code_for_floor)
+    if _floor and _PRIORITY_LEVEL.get(priority, 1) < _PRIORITY_LEVEL[_floor]:
+        priority = _floor
 
     # ── Phase 8: duplicate check (ML cosine primary, Jaccard fallback) ───
     ml_dup = _try_ml_duplicate(text, recent_texts or [])

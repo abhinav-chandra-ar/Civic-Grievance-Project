@@ -87,7 +87,17 @@ from apps.ml.training.corpus_data_v3 import (
     TVM_LOCATIONS_EXTENDED,
 )
 
-# Merged seed set: v2 + v3 bias-repair samples.
+# Hardening additions from corpus_data_v4 (benchmark-driven fixes 2026-05-25)
+# ---------------------------------------------------------------------------
+from apps.ml.training.corpus_data_v4 import (
+    ELECTRICAL_HAZARD_CONTRASTIVE,  # Fix 1: electrical_hazard vs street_light
+    LANDMARK_ALIASES_V2,            # Fix 4: abbreviations/misspellings (used by train_transformer.py)
+    MANGLISH_NON_SPAM,              # Fix 3: legitimate Manglish civic complaints
+    PRIORITY_SEVERITY_ANCHORS_V2,   # Fix 2: severity-modifier-aware priority
+    TVM_LOCATIONS_V4_EXTENDED,      # Fix 4: full extended landmark list v4
+)
+
+# Merged seed set: v2 + v3 bias-repair + v4 hardening samples.
 # These are used as the BASE before augmentation.
 _ALL_SEEDS: list[TrainingSample] = (
     ALL_SAMPLES
@@ -96,6 +106,10 @@ _ALL_SEEDS: list[TrainingSample] = (
     + ILLEGAL_CONSTRUCTION_ML_ADDITIONS
     + DRAINAGE_SEWAGE_CONTRASTIVE
     + PRIORITY_EMOTIONAL_ANCHORS
+    # v4 hardening fixes
+    + ELECTRICAL_HAZARD_CONTRASTIVE
+    + PRIORITY_SEVERITY_ANCHORS_V2
+    + MANGLISH_NON_SPAM
 )
 
 # ---------------------------------------------------------------------------

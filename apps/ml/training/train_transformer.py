@@ -76,12 +76,37 @@ def _check_deps() -> None:
 # ---------------------------------------------------------------------------
 
 def _load_samples(target: int) -> list[tuple[str, str, str, str]]:
-    """Return expanded training samples from corpus_data_v2 seeds."""
-    # Ensure apps/ is importable
+    """Return expanded training samples from corpus_data_v2 seeds + real datasets.
+
+    Production retraining
+    ---------------------
+    After building the augmented corpus from v2/v3 seeds, real-dataset samples
+    from BBMP (766K grievances), DravidianCodeMix (39K ML-EN), and WiLI (235K
+    language ID) are merged in.  Total training set is typically 10K–14K samples.
+    """
     sys.path.insert(0, str(PROJECT_ROOT))
     from apps.ml.training.generate_corpus_v2 import build_dataset  # noqa: PLC0415
     samples = build_dataset(target=target)
-    print(f"  Loaded {len(samples)} training samples")
+    print(f"  Corpus seeds (augmented): {len(samples)}")
+
+    # Merge real dataset samples
+    try:
+        from apps.ml.training.dataset_loaders import all_real_training_samples  # noqa: PLC0415
+        real = all_real_training_samples(
+            bbmp_max_per_cat=250,
+            dravidian_max_offensive=500,
+            dravidian_max_clean=700,
+            wili_max_per_lang=500,
+        )
+        # Deduplicate: real samples override nothing, just append novel texts
+        existing_keys = {s[0].lower().strip()[:300] for s in samples}
+        novel = [s for s in real if s[0].lower().strip()[:300] not in existing_keys]
+        samples = samples + novel
+        print(f"  Real-dataset additions:   {len(novel):,}  (BBMP + DravidianCodeMix + WiLI)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARN] Real datasets skipped: {exc}")
+
+    print(f"  Total training samples:   {len(samples):,}")
     return samples
 
 
@@ -249,14 +274,34 @@ def train_all(target: int = 6000, evaluate: bool = False) -> None:
     print(f"  Saved transformer heads -> {_HEADS_FILE}")
 
     # -- 5b. Pre-encode landmark embeddings --------------------------------
-    # Use TVM_LOCATIONS_EXTENDED (v2 single names + v3 compound aliases)
-    # so find_ward_candidates() can match real complaint descriptions.
-    from apps.ml.training.corpus_data_v3 import TVM_LOCATIONS_EXTENDED  # noqa: PLC0415
-    print(f"  Encoding {len(TVM_LOCATIONS_EXTENDED)} TVM landmarks (incl. compound aliases)...")
-    landmark_embs = backbone.encode(TVM_LOCATIONS_EXTENDED, normalize_embeddings=True)
+    # Build expanded landmark list:
+    #   TVM_LOCATIONS_V4_EXTENDED (curated TVM ward/landmark phrases + v4
+    #   abbreviation aliases and misspelling variants from Fix 4)
+    #   + OSM Kerala civic POI names (hospitals, schools, police, etc.)
+    from apps.ml.training.corpus_data_v4 import TVM_LOCATIONS_V4_EXTENDED  # noqa: PLC0415
+
+    landmark_names: list[str] = list(TVM_LOCATIONS_V4_EXTENDED)
+
+    # Append real Kerala OSM landmarks
+    try:
+        from apps.ml.training.dataset_loaders import load_osm_landmark_names  # noqa: PLC0415
+        osm_names = load_osm_landmark_names(max_names=4000, civic_only=True)
+        # Deduplicate against curated list
+        existing_lower = {n.lower() for n in landmark_names}
+        novel_osm = [n for n in osm_names if n.lower() not in existing_lower]
+        landmark_names = landmark_names + novel_osm
+        print(f"  Landmarks: {len(TVM_LOCATIONS_V4_EXTENDED)} curated + {len(novel_osm)} OSM POIs = {len(landmark_names)} total")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARN] OSM landmarks skipped: {exc}")
+        print(f"  Landmarks: {len(landmark_names)} curated only")
+
+    print(f"  Encoding {len(landmark_names)} landmarks...")
+    landmark_embs = backbone.encode(
+        landmark_names, normalize_embeddings=True, batch_size=256, show_progress_bar=False
+    )
     landmark_data = {
         "embeddings": landmark_embs,
-        "names":      TVM_LOCATIONS_EXTENDED,
+        "names":      landmark_names,
     }
     joblib.dump(landmark_data, _LANDMARK_FILE)
     print(f"  Saved landmark embeddings -> {_LANDMARK_FILE}")

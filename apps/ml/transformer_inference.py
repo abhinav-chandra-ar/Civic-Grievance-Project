@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import pathlib
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -61,6 +62,67 @@ if TYPE_CHECKING:
     from sklearn.preprocessing import LabelEncoder  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Landmark text normalisation (Fix 4 — abbreviation/misspelling expansion)
+#
+# Applied in find_ward_candidates() BEFORE embedding, so the cosine search
+# sees the canonical form even when users type abbreviations or misspellings.
+#
+# Rules applied in order (earlier rules take priority via re.sub on the
+# progressively-modified string):
+#   1. Multi-word abbreviations first (med clg → medical college)
+#   2. Single-word abbreviations (jn → junction, clg → college, …)
+#   3. Common Thiruvananthapuram misspellings
+# ---------------------------------------------------------------------------
+_LOC_ABBREV_RULES: list[tuple[re.Pattern[str], str]] = [
+    # ── multi-word abbreviations (must come before single-word rules) ────────
+    (re.compile(r"\bmed(?:ical)?\s+clg\b",         re.I), "medical college"),
+    (re.compile(r"\bmed(?:ical)?\s+coll(?:ege)?\b", re.I), "medical college"),
+    (re.compile(r"\bsat\s+hosp(?:ital)?\b",         re.I), "SAT hospital"),
+    (re.compile(r"\bsut\s+hosp(?:ital)?\b",         re.I), "SUT hospital"),
+    (re.compile(r"\bgen(?:eral)?\s+hosp(?:ital)?\b", re.I), "government hospital"),
+    (re.compile(r"\bgovt\s+hosp(?:ital)?\b",         re.I), "government hospital"),
+
+    # ── single-word abbreviations ────────────────────────────────────────────
+    (re.compile(r"\bjn\b",   re.I), "junction"),
+    (re.compile(r"\bjct\b",  re.I), "junction"),
+    (re.compile(r"\bclg\b",  re.I), "college"),
+    (re.compile(r"\bcoll\b", re.I), "college"),
+    (re.compile(r"\bhosp\b", re.I), "hospital"),
+    (re.compile(r"\brd\b",   re.I), "road"),
+    (re.compile(r"\bst\b",   re.I), "street"),   # only in location context
+
+    # ── common Thiruvananthapuram misspellings ────────────────────────────────
+    # Strict whole-word matching to avoid corrupting unrelated words.
+    (re.compile(r"\bpalaym\b",       re.I), "Palayam"),
+    (re.compile(r"\bpalayam\b",      re.I), "Palayam"),          # canonical noop (belt-and-braces)
+    (re.compile(r"\bkazhakootam\b",  re.I), "Kazhakkoottam"),
+    (re.compile(r"\bkazhakoottam\b", re.I), "Kazhakkoottam"),
+    (re.compile(r"\bkazhakkotam\b",  re.I), "Kazhakkoottam"),
+    (re.compile(r"\bkowdiyar\b",     re.I), "Kowdiar"),
+    (re.compile(r"\bnanthankode\b",  re.I), "Nanthancode"),
+    (re.compile(r"\bnanthankod\b",   re.I), "Nanthancode"),
+    (re.compile(r"\bthampanur\b",    re.I), "Thampanoor"),
+    (re.compile(r"\bkariavattam\b",  re.I), "Kariavattom"),
+    (re.compile(r"\btrivandum\b",    re.I), "Thiruvananthapuram"),
+    (re.compile(r"\btrivandrum\b",   re.I), "Thiruvananthapuram"),
+    (re.compile(r"\btrivancore\b",   re.I), "Thiruvananthapuram"),
+    (re.compile(r"\btvpm\b",         re.I), "Thiruvananthapuram"),
+    (re.compile(r"\bvakery\b",       re.I), "Bakery"),           # common typo
+]
+
+
+def _normalize_location_text(text: str) -> str:
+    """Expand abbreviations and fix common misspellings in location text.
+
+    Applied before the embedding lookup in find_ward_candidates() so that
+    the cosine search sees the canonical form even when users type e.g.
+    'pothole near Bakery jn' or 'issue near Palaym market'.
+    """
+    for pattern, replacement in _LOC_ABBREV_RULES:
+        text = pattern.sub(replacement, text)
+    return text
 
 # ---------------------------------------------------------------------------
 # Model file paths
@@ -352,7 +414,10 @@ class TransformerEngine:
             raise TransformerUnavailable(
                 "Landmark embeddings not loaded.  Re-run train_ml_models."
             )
-        loc_emb = _embed([location_text])[0]  # (384,)
+        # Expand abbreviations / fix misspellings before embedding so that
+        # "Bakery jn" → "Bakery junction", "Palaym" → "Palayam", etc.
+        normalized_text = _normalize_location_text(location_text)
+        loc_emb = _embed([normalized_text])[0]  # (384,)
         scores = _landmark_embeddings @ loc_emb  # (N,)
         top_idx = np.argsort(scores)[::-1][:top_k]
         candidates = [

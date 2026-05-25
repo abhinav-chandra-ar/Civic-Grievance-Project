@@ -124,5 +124,5 @@ class Command(BaseCommand):
             self.stdout.write("  (TF-IDF tier skipped via --no-tfidf)")
 
         self.stdout.write(self.style.SUCCESS(
-            "\n✓ Training complete.  Models loaded lazily on next request."
+            "\n[OK] Training complete.  Models loaded lazily on next request."
         ))

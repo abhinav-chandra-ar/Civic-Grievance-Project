@@ -65,6 +65,16 @@ from sklearn.metrics import classification_report  # noqa: E402
 from apps.ml.training.corpus_data import ALL_SAMPLES, TrainingSample  # noqa: E402
 from apps.ml.training.generate_corpus import expand_corpus  # noqa: E402
 
+# Real-dataset loaders (additive — supplement the hand-curated corpus seeds)
+try:
+    from apps.ml.training.dataset_loaders import (  # noqa: E402
+        all_real_training_samples,
+        load_bbmp_texts_for_dedup,
+    )
+    _REAL_DATASETS_AVAILABLE = True
+except ImportError:
+    _REAL_DATASETS_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -179,7 +189,15 @@ def _prepare_samples(
     samples: list[TrainingSample],
     augment_factor: int = 4,
 ) -> tuple[list[str], dict[str, list[str]]]:
-    """Expand and extract parallel label lists from training samples.
+    """Expand corpus seeds and merge with real-dataset samples.
+
+    Pipeline
+    --------
+    1. Augment hand-curated corpus seeds (existing behaviour).
+    2. If real datasets are available, load BBMP + DravidianCodeMix + WiLI
+       samples and append them WITHOUT further augmentation (they are already
+       real-world text and don't need synthetic expansion).
+    3. Deduplicate by normalised text (keeps first occurrence).
 
     Returns
     -------
@@ -189,7 +207,32 @@ def _prepare_samples(
                        "category", "priority", "department",
                        "spam", "language"
     """
+    # -- Step 1: augment corpus seeds ----------------------------------------
     expanded = expand_corpus(samples, augment_factor=augment_factor)
+
+    # -- Step 2: merge real-dataset samples ----------------------------------
+    if _REAL_DATASETS_AVAILABLE:
+        real_samples = all_real_training_samples(
+            bbmp_max_per_cat=250,
+            dravidian_max_offensive=500,
+            dravidian_max_clean=700,
+            wili_max_per_lang=500,
+        )
+        combined = expanded + real_samples
+        print(f"  Corpus seeds (augmented): {len(expanded):,}")
+        print(f"  Real-dataset additions:   {len(real_samples):,}")
+    else:
+        combined = expanded
+
+    # -- Step 3: deduplicate by normalised text --------------------------------
+    seen: set[str] = set()
+    deduped_combined: list[TrainingSample] = []
+    for item in combined:
+        key = item[0].lower().strip()[:300]
+        if key not in seen:
+            seen.add(key)
+            deduped_combined.append(item)
+
     texts: list[str] = []
     cat_labels: list[str] = []
     prio_labels: list[str] = []
@@ -197,7 +240,7 @@ def _prepare_samples(
     spam_labels: list[str] = []
     lang_labels: list[str] = []
 
-    for text, cat, prio, dept in expanded:
+    for text, cat, prio, dept in deduped_combined:
         texts.append(text)
         cat_labels.append(cat)
         prio_labels.append(prio)
@@ -338,22 +381,34 @@ def train_language_model(
 def fit_duplicate_vectorizer(texts: list[str]) -> TfidfVectorizer:
     """Fit an IDF-weighted word TF-IDF vectorizer for cosine-similarity duplicate detection.
 
-    Using word unigrams with IDF weighting means frequent terms like "near",
-    "the", "in" become low-weight, while specific civic terms like "pothole",
-    "kuzhal", "sewage" are high-weight.  This gives much better semantic
-    proximity than Jaccard token overlap.
+    Enrichment
+    ----------
+    When real datasets are available, BBMP sub-category + ward + remarks texts
+    are appended to the fit corpus.  This gives the vectorizer IDF weights
+    calibrated on real civic complaint vocabulary (not just augmented seeds).
+
+    Civic terms like "pothole", "kuzhal", "street light", "vellam", "drain"
+    become high-weight; stop words like "near", "the", "in" stay low-weight.
     """
+    fit_texts = list(texts)
+
+    if _REAL_DATASETS_AVAILABLE:
+        bbmp_texts = load_bbmp_texts_for_dedup(max_texts=8000)
+        if bbmp_texts:
+            fit_texts = fit_texts + bbmp_texts
+            print(f"  Duplicate vectorizer: {len(texts):,} corpus + {len(bbmp_texts):,} BBMP texts")
+
     print("Fitting duplicate detection vectorizer …")
     vec = TfidfVectorizer(
         analyzer="word",
         ngram_range=(1, 2),
-        max_features=20_000,
+        max_features=30_000,
         sublinear_tf=True,
         strip_accents=None,
-        min_df=1,
+        min_df=2,
     )
-    vec.fit(texts)
-    print(f"  Vocabulary size: {len(vec.vocabulary_)}")
+    vec.fit(fit_texts)
+    print(f"  Vocabulary size: {len(vec.vocabulary_):,}")
     return vec
 
 
